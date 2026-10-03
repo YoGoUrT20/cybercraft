@@ -1,5 +1,7 @@
 # CyberCraft
 
+![A Minecraft player in a Night City apartment kitchen](public/screenshot.png)
+
 Play Cyberpunk 2077 as a Minecraft player. You run through Night City with Minecraft's movement,
 carry Minecraft's inventory and HUD, build with Minecraft blocks on its streets and rooftops, and
 fight its NPCs with Minecraft weapons.
