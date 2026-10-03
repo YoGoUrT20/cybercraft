@@ -1,0 +1,55 @@
+name: Bug report
+description: Something doesn't work in the game, the installer or the build.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check [Known limitations](https://github.com/YoGoUrT20/cybercraft#known-limitations) first.
+        Before reproducing, set `bDiagnostics = 1` under `[Debug]` in `red4ext\plugins\CyberCraft\CyberCraft.ini`.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead. Screenshots help.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Load a save in Watson
+        2. Place a torch
+        3. ...
+  - type: input
+    id: cybercraft
+    attributes:
+      label: CyberCraft version
+      placeholder: 0.1.0
+    validations:
+      required: true
+  - type: input
+    id: cyberpunk
+    attributes:
+      label: Cyberpunk 2077 version and store
+      placeholder: 2.31, Steam
+    validations:
+      required: true
+  - type: textarea
+    id: mods
+    attributes:
+      label: Other mods and settings
+      description: RED4ext, Codeware, Mod Settings and Cyber Engine Tweaks versions, other mods, and whether DLSS / frame generation is on.
+  - type: textarea
+    id: log
+    attributes:
+      label: CyberCraft.log
+      description: "`red4ext\\logs\\CyberCraft.log` in the game folder. Drag the file in, or paste it."
+    validations:
+      required: true
+  - type: textarea
+    id: mclog
+    attributes:
+      label: Minecraft log (if Minecraft misbehaved)
+      description: "`%LOCALAPPDATA%\\CyberCraft\\Prism\\instances\\CyberCraft\\.minecraft\\logs\\latest.log`"

@@ -1,0 +1,28 @@
+# gradle / loom
+fabric/.gradle/
+fabric/build/
+fabric/run/
+fabric/out/
+# cmake
+red4ext/build/
+# ide
+.vs/
+.vscode/
+.idea/
+*.iml
+*.user
+.tools/
+# os
+.DS_Store
+Thumbs.db
+desktop.ini
+# logs and crash dumps
+*.log
+*.dmp
+# release packaging
+dist/
+# local tools and settings
+CMakeUserPresets.json
+fabric/run-guest*/
+__pycache__/
+*.pyc

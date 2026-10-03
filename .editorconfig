@@ -1,0 +1,26 @@
+root = true
+
+[*]
+charset = utf-8
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+# C++, Java, Gradle, CMake, Lua: tabs
+[*.{cpp,h,java,gradle,lua}]
+indent_style = tab
+indent_size = 4
+
+[CMakeLists.txt]
+indent_style = tab
+indent_size = 4
+
+[*.{py,ps1}]
+indent_style = space
+indent_size = 4
+
+[*.{reds,sh,json,yml,yaml}]
+indent_style = space
+indent_size = 2
+
+[*.md]
+trim_trailing_whitespace = false

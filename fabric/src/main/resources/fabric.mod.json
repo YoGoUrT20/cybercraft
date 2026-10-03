@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "id": "cybercraft",
+  "version": "${version}",
+  "name": "CyberCraft",
+  "description": "Play Cyberpunk 2077 with Minecraft physics, inventory and viewmodels.",
+  "authors": ["chasmlol", "YoGoUrT"],
+  "contact": {
+    "homepage": "https://github.com/YoGoUrT20/cybercraft",
+    "sources": "https://github.com/YoGoUrT20/cybercraft",
+    "issues": "https://github.com/YoGoUrT20/cybercraft/issues"
+  },
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": {
+    "main": ["dev.cybercraft.CyberCraft"],
+    "client": ["dev.cybercraft.client.CyberCraftClient"]
+  },
+  "mixins": [
+    "cybercraft.mixins.json",
+    { "config": "cybercraft.client.mixins.json", "environment": "client" }
+  ],
+  "depends": {
+    "fabricloader": ">=0.19.5",
+    "minecraft": "~26.3",
+    "java": ">=25",
+    "fabric-api": "*"
+  }
+}

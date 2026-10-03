@@ -1,0 +1,24 @@
+name: Feature request
+description: An idea for CyberCraft.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        [docs/ROADMAP.md](https://github.com/YoGoUrT20/cybercraft/blob/main/docs/ROADMAP.md) lists what's planned and what isn't.
+  - type: textarea
+    id: idea
+    attributes:
+      label: The idea
+      description: What should happen in the game, and why.
+    validations:
+      required: true
+  - type: dropdown
+    id: side
+    attributes:
+      label: Which side
+      options:
+        - Cyberpunk plugin
+        - Minecraft mod
+        - Both
+        - Not sure
