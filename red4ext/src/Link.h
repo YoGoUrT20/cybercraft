@@ -82,32 +82,60 @@ namespace cybercraft
 	// blocks sit flush on it instead of half sunk. Saved with the Minecraft world (Grid.cpp).
 	inline std::atomic<double> gGridOffset{ 0.0 };
 
+	// Minecraft's grid is turned this many degrees (Cyberpunk yaw: counter-clockwise seen from above)
+	// against Cyberpunk's axes, so that its rows run the way the player faced when aligning it
+	// ("Insert"), along the street rather than across Night City's north. Turned about where V
+	// stood, so it is shifted too: a Cyberpunk point p is at R(-yaw) p - shift on the turned grid
+	// (metres, before the scale). Saved with the Minecraft world (Grid.cpp).
+	inline std::atomic<double> gGridYaw{ 0.0 };
+	inline std::atomic<double> gGridShiftX{ 0.0 };
+	inline std::atomic<double> gGridShiftY{ 0.0 };
+
 	inline double MetresPerBlock() { return gMetresPerBlock.load(std::memory_order_relaxed); }
 
-	// Positions. Directions (normals, camera axes) take CpDirToMc / McDirToCp: no offset, and no
-	// scale, the axes being the same. Lengths: multiply or divide by MetresPerBlock().
+	// A Cyberpunk horizontal (x, y) turned onto the grid's axes, and back.
+	inline std::pair<double, double> CpToGrid(double a_x, double a_y)
+	{
+		const double yaw = gGridYaw.load(std::memory_order_relaxed) * 0.017453292519943295;
+		const double c = std::cos(yaw), s = std::sin(yaw);
+		return { c * a_x + s * a_y, -s * a_x + c * a_y };
+	}
+
+	inline std::pair<double, double> GridToCp(double a_x, double a_y)
+	{
+		const double yaw = gGridYaw.load(std::memory_order_relaxed) * 0.017453292519943295;
+		const double c = std::cos(yaw), s = std::sin(yaw);
+		return { c * a_x - s * a_y, s * a_x + c * a_y };
+	}
+
+	// Positions. Directions (normals, camera axes) take CpDirToMc: turned, but no offset and no
+	// scale. Lengths: multiply or divide by MetresPerBlock().
 	inline McVec CpToMc(float a_x, float a_y, float a_z)
 	{
 		const double k = 1.0 / MetresPerBlock();
-		return { a_x * k, (a_z - gGridOffset.load(std::memory_order_relaxed)) * k, -a_y * k };
+		const auto [x, y] = CpToGrid(a_x, a_y);
+		return { (x - gGridShiftX.load(std::memory_order_relaxed)) * k, (a_z - gGridOffset.load(std::memory_order_relaxed)) * k,
+			-(y - gGridShiftY.load(std::memory_order_relaxed)) * k };
 	}
 
 	inline CpVec McToCp(double a_x, double a_y, double a_z)
 	{
 		const double k = MetresPerBlock();
-		return { float(a_x * k), float(-a_z * k), float(a_y * k + gGridOffset.load(std::memory_order_relaxed)) };
+		const auto [x, y] = GridToCp(a_x * k + gGridShiftX.load(std::memory_order_relaxed), -a_z * k + gGridShiftY.load(std::memory_order_relaxed));
+		return { float(x), float(y), float(a_y * k + gGridOffset.load(std::memory_order_relaxed)) };
 	}
 
 	inline McVec CpDirToMc(float a_x, float a_y, float a_z)
 	{
-		return { a_x, a_z, -a_y };
+		const auto [x, y] = CpToGrid(a_x, a_y);
+		return { x, a_z, -y };
 	}
 
 	// Cyberpunk yaw (degrees, 0 = north/+Y, counter-clockwise seen from above) <-> MC yaw
 	// (degrees, 0 = south/+Z, 90 = west). Facing direction: CP (-sin y, cos y) in (x, y);
-	// MC (-sin y, cos y) in (x, z) with z = -north, so mc = 180 - cp.
-	inline float CpYawToMc(float a_yaw) { return 180.0f - a_yaw; }
-	inline float McYawToCp(float a_yaw) { return 180.0f - a_yaw; }
+	// MC (-sin y, cos y) in (x, z) with z = -north, so mc = 180 - cp, on the turned grid.
+	inline float CpYawToMc(float a_yaw) { return 180.0f - (a_yaw - float(gGridYaw.load(std::memory_order_relaxed))); }
+	inline float McYawToCp(float a_yaw) { return 180.0f - a_yaw + float(gGridYaw.load(std::memory_order_relaxed)); }
 	// Cyberpunk pitch is positive looking up; Minecraft's is positive looking down.
 	inline float CpPitchToMc(float a_pitch) { return -a_pitch; }
 	inline float McPitchToCp(float a_pitch) { return -a_pitch; }

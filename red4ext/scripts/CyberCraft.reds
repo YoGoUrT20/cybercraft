@@ -22,6 +22,7 @@ public class CyberCraftSpawn {
   public let shadows: Bool;
   // Collider
   public let halfExtents: Vector4;
+  public let yaw: Float;  // degrees, counter-clockwise seen from above
   public let obstacle: Bool;
 }
 
@@ -64,11 +65,13 @@ public class CyberCraftHost extends ScriptableService {
     return CyberCraftHost.Spawn(position, data);
   }
 
-  // A box collider centred on a Cyberpunk position, half extents in metres.
-  public static func SpawnCollider(position: Vector4, halfExtents: Vector4, obstacle: Bool) -> EntityID {
+  // A box collider centred on a Cyberpunk position, half extents in metres, turned yaw degrees
+  // about its centre (Minecraft's grid can be: Grid.cpp).
+  public static func SpawnCollider(position: Vector4, halfExtents: Vector4, yaw: Float, obstacle: Bool) -> EntityID {
     let data = new CyberCraftSpawn();
     data.isLight = false;
     data.halfExtents = halfExtents;
+    data.yaw = yaw;
     data.obstacle = obstacle;
     return CyberCraftHost.Spawn(position, data);
   }
@@ -156,7 +159,9 @@ public class CyberCraftHost extends ScriptableService {
     let spec = new StaticEntitySpec();
     spec.templatePath = r"cybercraft\\empty.ent";
     spec.position = position;
-    spec.orientation = new Quaternion(0.0, 0.0, 0.0, 1.0);
+    // About the vertical: (0, 0, sin, cos) of half the turn. Lights don't turn.
+    let half = data.isLight ? 0.0 : Deg2Rad(data.yaw) * 0.5;
+    spec.orientation = new Quaternion(0.0, 0.0, SinF(half), CosF(half));
     spec.attached = true;
     spec.tags = [n"CyberCraft"];
     data.id = system.SpawnEntity(spec);
@@ -299,8 +304,8 @@ public static func CyberCraftSpawnLight(position: Vector4, color: Vector4, radiu
 }
 
 @if(ModuleExists("Codeware"))
-public static func CyberCraftSpawnCollider(position: Vector4, halfExtents: Vector4, obstacle: Bool) -> EntityID {
-  return CyberCraftHost.SpawnCollider(position, halfExtents, obstacle);
+public static func CyberCraftSpawnCollider(position: Vector4, halfExtents: Vector4, yaw: Float, obstacle: Bool) -> EntityID {
+  return CyberCraftHost.SpawnCollider(position, halfExtents, yaw, obstacle);
 }
 
 @if(ModuleExists("Codeware"))

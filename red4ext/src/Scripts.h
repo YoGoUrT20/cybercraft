@@ -14,7 +14,8 @@ namespace cybercraft::Scripts
 	// Cyberpunk positions (metres). Returns the entity's id hash, 0 when nothing was spawned.
 	std::uint64_t SpawnLight(const CpVec& a_position, float a_r, float a_g, float a_b, float a_radius, float a_intensity, float a_flicker,
 		bool a_shadows);
-	std::uint64_t SpawnCollider(const CpVec& a_centre, const CpVec& a_halfExtents, bool a_obstacle);
+	// The box is turned a_yaw degrees (counter-clockwise seen from above) about its centre.
+	std::uint64_t SpawnCollider(const CpVec& a_centre, const CpVec& a_halfExtents, float a_yaw, bool a_obstacle);
 	void          Despawn(std::uint64_t a_entity);
 	void          DespawnAll();
 

@@ -21,12 +21,20 @@ namespace cybercraft::Puppet
 	// takeover teleports again rather than deciding nothing moved.
 	void Release();
 
-	// Diagnostics since the last call: teleports made, and how far V had moved vertically on her own
-	// between two of them (Cyberpunk's gravity on ground it can't feel).
+	// Diagnostics since the last call: teleports made, how far V had moved vertically on her own
+	// between two of them (Cyberpunk's gravity on ground it can't feel), and how often and how far
+	// Cyberpunk pushed her sideways (her body against a wall Minecraft's thinner player stands at),
+	// and the most she was then kept off Minecraft's player ([Puppet] fMaxPushback).
 	struct Stats
 	{
 		std::uint32_t teleports{ 0 };
 		float         maxSink{ 0.0f };
+		std::uint32_t pushes{ 0 };
+		float         maxPush{ 0.0f };
+		float         maxOffset{ 0.0f };
 	};
 	Stats TakeStats();
+
+	// How far V stands off Minecraft's player now, where Cyberpunk pushed her (Cyberpunk x, y).
+	CpVec Offset();
 }

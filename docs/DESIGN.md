@@ -101,6 +101,10 @@ colliders and light radii for builds, search radii.
   boundary, and blocks placed there sit flush. The ground it aligned to belongs to the Minecraft
   world and is saved next to it (`%LOCALAPPDATA%\CyberCraft\cybercraft-world.ini`, `fGridGround`),
   so it stays on a boundary at any scale.
+- **Grid heading.** `Insert` also turns the grid about V so its rows run the way she faces, the
+  nearest of the four ways to its heading now (`fGridYaw`, plus `fGridShiftX`/`fGridShiftY` so V's
+  spot keeps its Minecraft coordinates). Every Cyberpunk <-> Minecraft conversion (`Link.h`) turns
+  with it, so the collision rays, camera, NPC stand-ins and block colliders all follow.
 - **One world.** Night City (Badlands included) is one continuous space, so there is one Minecraft
   world (the `cybercraft:mirror` preset: a void overworld whose dimension type spans y −1024 to
   1024), and `worldId` is the constant `"CP77"`. There are no load doors to follow.

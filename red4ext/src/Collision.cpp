@@ -328,7 +328,29 @@ namespace cybercraft
 				continue;
 			}
 			MarkSurface(regions_, x, z, surfaceY, normal);
-			if (std::abs(normal.Y) < cfg.steepNormalY) {
+			bool steep = std::abs(normal.Y) < cfg.steepNormalY;
+			if (steep) {
+				// A step's rounded front edge reads as steep too, and with the grid turned along a
+				// staircase a whole row of samples lands on the same edge: a fence of posts half a
+				// block apart, too close for Minecraft's player to pass. Just behind the edge (against
+				// the face's outward lean) a step has flat ground no higher than Minecraft steps up;
+				// a steep slope or a wall doesn't.
+				const double h = std::sqrt(double(normal.X) * normal.X + double(normal.Z) * normal.Z);
+				if (h > 1e-3) {
+					constexpr double kBehind = 0.125;
+					const double     bx = x - normal.X / h * kBehind, bz = z - normal.Z / h * kBehind;
+					RED4ext::Vector4 topHit{};
+					RED4ext::Vector4 topNormal{};
+					RED4ext::CName   topMaterial{};
+					bool             topInside = false;
+					++rays;
+					if (Raycast({ bx, surfaceY + 0.75, bz }, { bx, surfaceY - 0.25, bz }, topHit, topNormal, topMaterial, &topInside) && !topInside &&
+						std::abs(topNormal.Y) >= cfg.steepNormalY && topHit.Y - surfaceY <= 0.6) {
+						steep = false;
+					}
+				}
+			}
+			if (steep) {
 				// Too steep to walk: raise a wall column so Minecraft's step-up refuses it
 				// (DESIGN.md §5.1). Down rays only graze such faces, so this is a backstop;
 				// the horizontal probes below are what actually find walls.
@@ -358,8 +380,28 @@ namespace cybercraft
 			for (int axis = 0; axis < 2; ++axis) {
 				++rays;
 				const McVec to{ x + (axis == 0 ? step : 0.0), y, z + (axis == 1 ? step : 0.0) };
+				// Probes only run +x and +z: a face looking the other way is met from inside its solid,
+				// a hit where the probe starts, and that hit is what marks it. Leaving such starts
+				// out opened every wall facing -x or -z.
 				if (Raycast({ x, y, z }, to, hit, normal, material)) {
-					MarkWall(axis, axis == 0 ? z : x, hit, normal, y - 0.375, y + 0.375);
+					// At the knee the band reaches 0.625 blocks up, past the 0.6 Minecraft's player
+					// steps up, so a step a little over a quarter block tall (a stair, ~19 cm at 0.75)
+					// turned into a wall there was no getting over. Down just past the face, its top:
+					// the band ends there. A real wall is still solid that high, and keeps the band.
+					double y1 = y + 0.375;
+					if (height < 0.5) {
+						constexpr double kIn = 0.0625;
+						const McVec      over{ hit.X - normal.X * kIn, groundY + 0.75, hit.Z - normal.Z * kIn };
+						RED4ext::Vector4 topHit{};
+						RED4ext::Vector4 topNormal{};
+						RED4ext::CName   topMaterial{};
+						bool             inside = false;
+						++rays;
+						if (Raycast(over, { over.x, y - 0.375, over.z }, topHit, topNormal, topMaterial, &inside) && !inside && topHit.Y < y1) {
+							y1 = std::max<double>(topHit.Y - kEps, y - 0.375);  // as floors: up to the top, not a voxel past it
+						}
+					}
+					MarkWall(axis, axis == 0 ? z : x, hit, normal, y - 0.375, y1);
 				}
 			}
 		}
@@ -521,6 +563,50 @@ namespace cybercraft
 			const auto local = static_cast<std::uint32_t>((bx - rx * kRegionSize) + kRegionSize * ((by - ry * kRegionSize) + kRegionSize * (bz - rz * kRegionSize)));
 			region.blocks[local][gy - by * 8] |= bit;
 		}
+	}
+
+	bool Collision::SentSolid(double a_x, double a_y, double a_z) const
+	{
+		const auto gx = FloorI(a_x * 8.0), gy = FloorI(a_y * 8.0), gz = FloorI(a_z * 8.0);
+		const auto bx = FloorDiv(gx, 8), by = FloorDiv(gy, 8), bz = FloorDiv(gz, 8);
+		const auto rx = FloorDiv(bx, kRegionSize), ry = FloorDiv(by, kRegionSize), rz = FloorDiv(bz, kRegionSize);
+		const auto key = RegionKey(rx, ry, rz);
+		const auto local = static_cast<std::uint32_t>((bx - rx * kRegionSize) + kRegionSize * ((by - ry * kRegionSize) + kRegionSize * (bz - rz * kRegionSize)));
+		const auto bit = 1ull << ((gz - bz * 8) * 8 + (gx - bx * 8));
+		for (const auto* regions : { &sent_, &guard_ }) {
+			const auto region = regions->find(key);
+			if (region == regions->end()) {
+				continue;
+			}
+			const auto block = region->second.blocks.find(local);
+			if (block != region->second.blocks.end() && (block->second[gy - by * 8] & bit)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	std::string Collision::DescribeAhead(const McVec& a_feet, double a_dirX, double a_dirZ) const
+	{
+		const double length = std::sqrt(a_dirX * a_dirX + a_dirZ * a_dirZ);
+		if (length < 1e-6) {
+			return {};
+		}
+		const double fx = a_dirX / length, fz = a_dirZ / length;
+		const double sx = -fz, sz = fx;  // across
+		std::string  out;
+		for (int step = 1; step <= 8; ++step) {
+			const double d = step / 8.0;
+			out += std::format("\n    {:.3f} ahead:", d);
+			for (const double side : { -0.3, 0.0, 0.3 }) {
+				out += ' ';
+				for (int h = -2; h < 16; ++h) {
+					const double y = a_feet.y + (h + 0.5) / 8.0;
+					out += SentSolid(a_feet.x + fx * d + sx * side, y, a_feet.z + fz * d + sz * side) ? '#' : '.';
+				}
+			}
+		}
+		return out;
 	}
 
 	void Collision::RecordWater(double a_mcX, double a_mcZ, double a_surfaceY)

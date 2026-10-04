@@ -12,10 +12,15 @@
 // ground under V is on a block boundary and blocks there sit flush. That ground belongs to the
 // Minecraft world (its blocks are stored in grid coordinates), so it is saved next to it, in
 // %LOCALAPPDATA%\CyberCraft, and the offset follows it to any scale.
+//
+// Its heading: Night City's streets run every which way, Minecraft's rows north-south and east-west,
+// so blocks along a street went up as a staircase. Aligning also turns the grid to the way V faces
+// (gGridYaw), about where she stands (gGridShiftX/Y), so blocks there stay where they were, turned.
+// Saved with the ground.
 namespace cybercraft::Grid
 {
-	// Loads the scale and the saved ground into gMetresPerBlock and gGridOffset. Call once, at
-	// plugin load.
+	// Loads the scale, the saved ground and heading into gMetresPerBlock, gGridOffset, gGridYaw and
+	// gGridShiftX/Y. Call once, at plugin load.
 	void Load();
 
 	// Re-reads the scale (at most twice a second). True when it changed: everything in Minecraft
@@ -25,4 +30,13 @@ namespace cybercraft::Grid
 	// Sets gGridOffset so that a_groundCpZ (Cyberpunk metres) lands on a block boundary, and saves
 	// it. Returns how far the grid moved (metres).
 	double AlignTo(float a_groundCpZ);
+
+	// Turns the grid so its rows run along a_cpYaw (Cyberpunk degrees), whichever of the four ways
+	// is nearest its heading now, about (a_cpX, a_cpY): that point keeps its Minecraft coordinates.
+	// Saves it. Returns how far it turned (degrees).
+	double TurnTo(float a_cpX, float a_cpY, float a_cpYaw);
+
+	// Moves the grid by (a_cpDx, a_cpDy) Cyberpunk metres, and saves it: blocks move that way in
+	// Night City.
+	void Nudge(double a_cpDx, double a_cpDy);
 }

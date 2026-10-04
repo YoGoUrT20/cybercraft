@@ -90,6 +90,26 @@ V's ground. The load probe also casts from just under V's feet (`probe: inside .
 there means the game reports rays that start inside a solid. **Not yet confirmed in a run:** that the
 floor stays under V everywhere now, and which of the three it was.
 
+Stairs stuck V: a wall probe hit marks a band 3/4 block tall about the probe, and at knee height
+(a quarter block up) that reached 0.625 blocks, over the 0.6 Minecraft's player steps up. A stair
+riser a little over a quarter block (~19 cm at 0.75) was hit by it and became a wall: only some
+steps, depending on their height and where the samples fell. A knee hit now casts one ray down just
+past the face for the step's top and ends the band there; a real wall is still solid that high and
+keeps the band.
+
+Stairs also grew fences once the grid was turned along them. A down ray that hits a steep surface
+raises a 2.5-block wall column there (so Minecraft won't climb steep slopes), and a step's rounded
+front edge reads as steep. With the grid at an angle to a staircase only the odd sample landed on
+an edge; turned along it, a whole row of samples lands on the same edge, and the posts stood half a
+block apart with 3/8 of a block between them, too narrow for Minecraft's player. A steep hit now
+casts one ray down just behind the edge: flat ground there no more than 0.6 blocks higher is a step,
+and raises no post. (A wall probe that starts inside something still marks a wall where it starts:
+the probes only run +x and +z, and that is how a wall facing -x or -z is found at all. Leaving those
+out took out half the walls, and V was thrown back out of Cyberpunk's ones she walked into.) With
+`bDiagnostics = 1`, when Minecraft's player is held against something with a movement key down for a
+quarter second, the log says `stuck:` with what it was sent ahead of it. Some stair spots still
+stop Minecraft's player (they can be jumped).
+
 ### Cyberpunk keeps the camera
 
 There is no camera override (third person only moves the camera; see below). The look is the
@@ -496,6 +516,35 @@ block on a pavement at 7.3 m sat 0.3 m sunk. `Insert` shifts the whole grid so t
 is a block boundary. The ground it aligned to is saved with the Minecraft world and applies
 everywhere (at any scale), so one street is flush and another may not be.
 
+Night City's streets don't run north-south, and a wall along one went up as a staircase. `Insert`
+also turns the grid about V so its rows run the way she faces: of the four headings along her look,
+the one nearest the grid's current heading, so builds near V turn as little as they can (at most
+45°) and V keeps her Minecraft coordinates. Builds farther off swing round with it. The heading
+(`fGridYaw`, with `fGridShiftX`/`fGridShiftY`) is saved next to the ground; the colliders under
+the blocks are turned to match. Working in a run, as are the arrow keys below.
+
+The arrow keys fine-tune it: each press (and each repeat while held) moves the grid a pixel
+(`fNudgeBlocks`, 1/16 block) forward, back, left or right of the way V faces, and saves it. V stays
+where she is, so Minecraft's player is moved back under her by what the grid moved, at its own height
+and look; Minecraft keeps driving V meanwhile, and she is held still until it has arrived. (A full
+teleport, as `Insert` makes, lets go of V until then: for a few frames the camera is at Cyberpunk's
+eye height instead of Minecraft's, a bob up and down.) The city's collision and the builds' lights
+and colliders are resent half a second after the last nudge, not on every one.
+
+### V near walls
+
+V's body in Cyberpunk is wider than Minecraft's player (0.3 blocks each way: 0.225 m at 0.75), so
+Minecraft walks her closer to a wall than Cyberpunk lets her stand. Cyberpunk pushed her out, the
+next teleport put her back, every frame she walked or turned: the view shook near walls. A teleport
+lands in the frame it is made (V never sank between them), so whatever else moves her sideways is
+Cyberpunk, and she is now placed where it pushed her: up to `fMaxPushback` (0.25 m) off Minecraft's
+player, wearing off a couple of millimetres a frame once nothing pushes. Only while Minecraft's
+player moves or turns: standing still, Cyberpunk nudging her every frame (a slope) carried her off
+half a metre, the limit snapped her back, and over again. A single push past the limit isn't kept
+either, and no longer drops the offset (that was the snap). The 5-second log line counts
+the pushes and how far off she stood. Tried in a run: much less shake near walls, and no drift
+standing still.
+
 ## Time and weather
 
 Both directions, on the host's integrated server only (in a shared world, guests' games don't
@@ -597,6 +646,10 @@ fFaceShade = 0.35                  ; how much of Minecraft's face shading is kep
 fBlockLight = 0.5                  ; warm glow near Minecraft's torches and lamps
 fHaze = 0.005                      ; fade into the picture behind, per metre of distance
 bLitHand = 1                       ; draw the hand and held item lit like the blocks; 0: Minecraft's overlay
+fNudgeBlocks = 0.0625              ; how far an arrow key moves the grid, in blocks
+
+[Puppet]
+fMaxPushback = 0.25                ; metres V may stand off Minecraft's player where Cyberpunk pushes her (walls); 0 off
 
 [Input]
 bNativeLook = 1                    ; 0: the plugin owns the whole mouse, no looking up and down

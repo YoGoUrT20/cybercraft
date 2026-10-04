@@ -96,6 +96,20 @@ namespace cybercraft
 			std::uint32_t  epoch = 1;
 			std::uint32_t  teleportSeq = 1;
 			bool           teleportPending = true;
+			// Seconds until the collision and the blocks' lights and colliders are resent after the
+			// arrows last nudged the grid (0: nothing waiting). Held, an arrow nudges it many times a
+			// second, and resending all of it on each left Minecraft's player nothing to stand on.
+			float          nudgeSettle = 0.0f;
+			// A nudge moves Minecraft's player by just what the grid moved under it ("soft"), not to
+			// V's feet as a teleport does: same height, same look, and Minecraft keeps driving V while
+			// it catches up. A teleport let go of V until Minecraft had arrived, and the camera went
+			// back to Cyberpunk's eye height for those few frames: V bobbed up and down on every nudge.
+			std::uint32_t  hardTeleportSeq = 1;   // the last teleport that wasn't a nudge
+			bool           softPending = false;
+			McVec          softTarget{ 0.0, 0.0, 0.0 };
+			// Seconds V is still held after Minecraft arrived from a nudge: the tick it reports next
+			// still starts where it was, and ticks from before are in the grid's old coordinates.
+			float          softHold = 0.0f;
 			constexpr std::uint32_t kWorldId = 0x43503737;  // "CP77": Night City is one continuous world
 			// Metres above V's feet Cyberpunk's first-person camera stands, taken to be Minecraft's
 			// standing eye at a metre a block (1.62): what ThirdPerson moves it from to Minecraft's eye.
@@ -562,20 +576,54 @@ namespace cybercraft
 
 			auto here = CpToMc(pos.X, pos.Y, pos.Z);
 
-			// Insert: shift Minecraft's grid so the ground under V is on a block boundary. Everything
-			// in Minecraft coordinates moves with it: the collision is resent, and Minecraft's player
-			// is put back where V stands.
+			// Insert: shift Minecraft's grid so the ground under V is on a block boundary, and turn it
+			// about her so its rows run the way she faces. Everything in Minecraft coordinates moves
+			// with it: the collision is resent, and Minecraft's player is put back where V stands.
 			if (Input::TakeAlignRequest()) {
 				const auto ground = Collision::Get().FirstHitY(McVec{ here.x, here.y + 1.0, here.z }, McVec{ here.x, here.y - 3.0, here.z });
 				if (ground) {
 					Grid::AlignTo(McToCp(here.x, *ground, here.z).z);
-					here = CpToMc(pos.X, pos.Y, pos.Z);
+				} else {
+					logger::info("grid: no ground under V to align to");
+				}
+				Grid::TurnTo(pos.X, pos.Y, yaw);
+				here = CpToMc(pos.X, pos.Y, pos.Z);
+				++epoch;
+				Collision::Get().Reset(epoch);
+				Builds::Respawn();
+				teleportPending = true;
+				nudgeSettle = 0.0f;
+			}
+
+			// The arrows: move the grid a little forward, back, left or right of the way V faces. V
+			// stays where she is in Night City, so Minecraft's player is moved back under her (a soft
+			// teleport, below); the city's collision, a few hundredths of a block off meanwhile, is
+			// resent once they stop.
+			if (const auto [forward, left] = Input::TakeNudge(); forward != 0 || left != 0) {
+				static const double kNudgeBlocks = std::clamp(Config::GetFloat(L"World", L"fNudgeBlocks", 1.0f / 16.0f), 0.001f, 1.0f);
+				const double        step = kNudgeBlocks * MetresPerBlock();
+				const double        heading = yaw * 0.017453292519943295;
+				// V's facing (-sin, cos) and her left (-cos, -sin), Cyberpunk x and y.
+				const double fx = -std::sin(heading), fy = std::cos(heading);
+				const double lx = -fy, ly = fx;
+				const auto before = here;
+				Grid::Nudge(step * (forward * fx + left * lx), step * (forward * fy + left * ly));
+				here = CpToMc(pos.X, pos.Y, pos.Z);
+				// Minecraft's player moved the other way under the grid: by as much as V's own
+				// coordinates did. From where it is, at its own height.
+				const bool  behind = softPending || (teleportSeq != hardTeleportSeq && mc.teleportAck != teleportSeq);
+				const McVec from = behind ? softTarget : McVec{ mc.x, mc.y, mc.z };
+				softTarget = { from.x + here.x - before.x, from.y, from.z + here.z - before.z };
+				softPending = true;
+				nudgeSettle = 0.5f;
+			}
+			if (nudgeSettle > 0.0f) {
+				nudgeSettle -= delta;
+				if (nudgeSettle <= 0.0f) {
+					nudgeSettle = 0.0f;
 					++epoch;
 					Collision::Get().Reset(epoch);
 					Builds::Respawn();
-					teleportPending = true;
-				} else {
-					logger::info("grid: no ground under V to align to");
 				}
 			}
 
@@ -597,8 +645,22 @@ namespace cybercraft
 				}
 			}
 
+			// A nudge before Minecraft drives V (or with a teleport due anyway) is a teleport.
+			if (softPending && (teleportPending || !st.puppeting)) {
+				softPending = false;
+				teleportPending = true;
+			}
+			if (softPending) {
+				++teleportSeq;
+				softPending = false;
+				softHold = 0.0f;
+				if (Config::Diagnostics()) {
+					logger::info("teleport #{} (nudge) to MC ({:.3f}, {:.3f}, {:.3f})", teleportSeq, softTarget.x, softTarget.y, softTarget.z);
+				}
+			}
 			if (teleportPending) {
 				++teleportSeq;
+				hardTeleportSeq = teleportSeq;
 				teleportPending = false;
 				lastTeleportMc = here;
 				st.yaw = CpYawToMc(yaw);
@@ -618,7 +680,10 @@ namespace cybercraft
 			const bool   ground = Collision::Get().Hits() > 0;
 			// Not while V is dead either: Cyberpunk's death screen needs the mouse, and Minecraft's
 			// overlay (it only draws while Minecraft drives V) has no business over it.
-			const bool   ready = haveMc && st.mcInWorld && mc.teleportAck == teleportSeq && !(mc.flags & proto::kMcDead) && !mounted && !st.vDead;
+			// Behind on nudges only, Minecraft is still where V is (give or take a nudge).
+			const bool   nudging = teleportSeq != hardTeleportSeq && mc.teleportAck != teleportSeq;
+			const bool   arrived = mc.teleportAck == teleportSeq || (nudging && st.puppeting && mc.teleportAck >= hardTeleportSeq && mc.teleportAck < teleportSeq);
+			const bool   ready = haveMc && st.mcInWorld && arrived && !(mc.flags & proto::kMcDead) && !mounted && !st.vDead;
 			if (ready && !ground && !warnedNoGround) {
 				warnedNoGround = true;
 				logger::warn("collision: no surface found around V yet; Minecraft won't drive V until one is");
@@ -679,8 +744,45 @@ namespace cybercraft
 			}
 			// Up and down: Cyberpunk's camera held at Minecraft's pitch.
 			st.pitch = Look::Pitch(player, puppet, looking, turn, cameraPitch, st.pitch, delta);
+			// V held still from a nudge until Minecraft's player has arrived and ticked there.
+			if (nudging) {
+				softHold = 0.15f;
+			} else if (softHold > 0.0f) {
+				softHold -= delta;
+				if (softHold <= 0.0f) {
+					softHold = 0.0f;
+					ticks.clear();  // in the grid's old coordinates, or half way between
+				}
+			}
 			const auto feet = SmoothedFeet(mc);
-			if (puppet) {
+			// Stuck (bDiagnostics): a movement key held, and Minecraft's player hasn't moved for a
+			// quarter second. Once per time, with what Minecraft was sent in front of it, and where V
+			// stands.
+			if (Config::Diagnostics()) {
+				static float stuckFor = 0.0f;
+				static McVec stuckAt{ 0.0, 0.0, 0.0 };
+				static bool  reported = false;
+				const auto [forward, left] = Input::HeldMovement();
+				const bool moved = std::abs(mc.x - stuckAt.x) > 0.02 || std::abs(mc.z - stuckAt.z) > 0.02;
+				if (!puppet || (forward == 0 && left == 0) || moved || st.mcScreenOpen) {
+					stuckFor = 0.0f;
+					stuckAt = { mc.x, mc.y, mc.z };
+					reported = false;
+				} else if ((stuckFor += delta) > 0.25f && !reported) {
+					reported = true;
+					// Minecraft yaw: facing (-sin, cos) and its left (cos, sin) in x, z.
+					const double y = st.yaw * 0.017453292519943295;
+					const double dx = forward * -std::sin(y) + left * std::cos(y);
+					const double dz = forward * std::cos(y) + left * std::sin(y);
+					const auto   offset = Puppet::Offset();
+					logger::info("stuck: Minecraft's player at ({:.3f}, {:.3f}, {:.3f}) (on ground {}) hasn't moved for {:.2f} s with keys forward {} left {}, "
+								 "look yaw {:.1f}; V at MC ({:.3f}, {:.3f}, {:.3f}), standing ({:+.3f}, {:+.3f}) m off it. Sent ahead (left, middle, right "
+								 "edge; a quarter block under the feet to two blocks up):{}",
+						mc.x, mc.y, mc.z, (mc.flags & proto::kMcOnGround) != 0, stuckFor, forward, left, st.yaw, here.x, here.y, here.z, offset.x, offset.y,
+						Collision::Get().DescribeAhead(McVec{ mc.x, mc.y, mc.z }, dx, dz));
+				}
+			}
+			if (puppet && softHold <= 0.0f) {
 				Puppet::Apply(feet, st.yaw, CpVec{ pos.X, pos.Y, pos.Z }, yaw, (mc.flags & proto::kMcOnGround) != 0);
 				st.lastPuppeted = now;
 			}
@@ -719,9 +821,11 @@ namespace cybercraft
 			}
 			toMc.worldId = kWorldId;
 			toMc.collisionEpoch = epoch;
-			toMc.posX = here.x;
-			toMc.posY = here.y;
-			toMc.posZ = here.z;
+			// Where a teleport sends Minecraft's player: V's feet, or for a nudge where it stands.
+			const McVec sendTo = nudging ? softTarget : here;
+			toMc.posX = sendTo.x;
+			toMc.posY = sendTo.y;
+			toMc.posZ = sendTo.z;
 			toMc.yaw = st.yaw;
 			toMc.pitch = st.pitch;
 			toMc.teleportSeq = teleportSeq;
@@ -751,9 +855,10 @@ namespace cybercraft
 			if (logTimer <= 0.0f) {
 				logTimer = 5.0f;
 				const auto puppetStats = Puppet::TakeStats();
-				logger::info("V at Cyberpunk ({:.2f}, {:.2f}, {:.2f}) yaw {:.1f}; Minecraft {} flags {:#x} at ({:.2f}, {:.2f}, {:.2f}) ack {}; look yaw {:.1f} pitch {:.1f} ({}); {} teleports, V sank up to {:.3f} m between them",
+				logger::info("V at Cyberpunk ({:.2f}, {:.2f}, {:.2f}) yaw {:.1f}; Minecraft {} flags {:#x} at ({:.2f}, {:.2f}, {:.2f}) ack {}; look yaw {:.1f} pitch {:.1f} ({}); {} teleports, V sank up to {:.3f} m between them; "
+							 "Cyberpunk pushed her aside {} times, up to {:.3f} m, and she stood up to {:.3f} m off Minecraft's player",
 					pos.X, pos.Y, pos.Z, yaw, haveMc ? "linked" : (mcAlive ? "alive" : "absent"), mc.flags, mc.x, mc.y, mc.z, mc.teleportAck, st.yaw,
-					st.pitch, Look::PitchSource(), puppetStats.teleports, puppetStats.maxSink);
+					st.pitch, Look::PitchSource(), puppetStats.teleports, puppetStats.maxSink, puppetStats.pushes, puppetStats.maxPush, puppetStats.maxOffset);
 			}
 		}
 	}

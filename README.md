@@ -25,8 +25,9 @@ memory. Minecraft runs hidden in the background, and Cyberpunk draws the picture
 - **Overlay:** Minecraft's hand, hotbar, health and hunger, inventory and every other Minecraft
   screen, drawn into Cyberpunk's frame (D3D12).
 - **Blocks:** place and break blocks anywhere. They're drawn in the world and hidden behind
-  buildings, cars and people. Press **Insert** while standing on a street to snap the block grid to
-  it, so blocks sit flush on the pavement.
+  buildings, cars and people. Press **Insert** while standing on a street, facing along it, to snap
+  the block grid to it, so blocks sit flush on the pavement and run along the street. The **arrow
+  keys** then fine-tune it a pixel at a time. The grid is saved with your Minecraft world.
 - **Builds are real in Night City:** torches, lanterns, glowstone and lava light the streets around
   them, and NPCs, cars and bullets meet the walls you build.
 - **Third person:** Minecraft's **F5** pulls Cyberpunk's camera back and shows your Minecraft skin
@@ -92,7 +93,8 @@ wheel, grenades and arm cyberware do nothing until it closes. These keys are spe
 | **T** | Cyberpunk's phone (answer, hold for contacts) |
 | **`** | Cyber Engine Tweaks overlay, if installed |
 | **O** | Minecraft's pause / options menu |
-| **Insert** | Snap Minecraft's block grid to the ground under V |
+| **Insert** | Snap Minecraft's block grid to the ground under V and turn it the way V faces |
+| **Arrow keys** | Nudge Minecraft's block grid a pixel (1/16 block) forward, back, left or right of V; hold to keep going |
 
 Minecraft's: **E** inventory, **/** chat and commands, **Shift** sneak, **Q** drop, the number
 keys and the wheel for the hotbar, and so on. With a Minecraft screen open every key is Minecraft's.
@@ -150,6 +152,10 @@ bHudMask = 1                        ; keep blocks under the game's HUD (needs fr
 fLightGain = 1.7                    ; how bright Night City's light makes blocks, mobs and your hand
 fLightColor = 0.85                  ; how much of Night City's colour that light keeps (0 grey, 1 all)
 bLitHand = 1                        ; 0: your hand and held item keep Minecraft's own light
+fNudgeBlocks = 0.0625               ; how far one arrow key press moves the block grid, in blocks
+
+[Puppet]
+fMaxPushback = 0.25                 ; metres V may stand off Minecraft's player near walls (stops the shake); 0: off
 
 [Body]
 bHideV = 1                          ; 0: V's own body when you look down, as before
@@ -180,6 +186,9 @@ Java 25 and the mod jar from the release. Every key, with what it does, is in
   the game yet; how they
   should behave, and what to tune, is in [docs/ROADMAP.md](docs/ROADMAP.md).
 - No save snapshots yet: loading an older Cyberpunk save doesn't rewind your Minecraft world.
+- There is one block grid for the whole world. Turning it with **Insert** turns it about where you
+  stand, so builds near you barely move but builds far away swing round with it.
+- Some spots on stairs can still stop you; jump over them.
 
 If something goes wrong, `red4ext\logs\CyberCraft.log` in the game folder says what. Set
 `bDiagnostics = 1` before sending a bug report.

@@ -232,9 +232,10 @@ namespace cybercraft::Builds
 					}
 					const auto& box = section->boxes[section->colliders.size()];
 					const auto  centre = McToCp(box.cx, box.cy, box.cz);
-					// Minecraft x, y, z extents are Cyberpunk x, z, y, in metres.
+					// Minecraft x, y, z extents are Cyberpunk x, z, y, in metres, along the grid's turned axes.
 					const float size = float(MetresPerBlock());
-					const auto  entity = Scripts::SpawnCollider(centre, CpVec{ float(box.hx) * size, float(box.hz) * size, float(box.hy) * size }, cfg.obstacles);
+					const auto  entity = Scripts::SpawnCollider(centre, CpVec{ float(box.hx) * size, float(box.hz) * size, float(box.hy) * size },
+						 float(gGridYaw.load()), cfg.obstacles);
 					--a_budget;
 					if (entity == 0) {
 						return;  // not spawning right now; try again next frame

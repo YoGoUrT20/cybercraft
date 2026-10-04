@@ -49,6 +49,24 @@ namespace cybercraft
 		constexpr std::uint32_t kDikF = 0x21;       // Cyberpunk interact while it offers one, else Minecraft's swap hands
 		constexpr std::uint32_t kDikInsert = 0xD2;  // this plugin: align Minecraft's grid to the ground here
 		std::atomic<bool>       alignRequested{ false };
+		// This plugin: the arrows nudge Minecraft's grid (held, they keep nudging with the key's repeat).
+		constexpr std::uint32_t kDikUp = 0xC8, kDikDown = 0xD0, kDikLeft = 0xCB, kDikRight = 0xCD;
+		std::atomic<int>        nudgeForward{ 0 };
+		std::atomic<int>        nudgeLeft{ 0 };
+
+		bool IsArrow(std::uint32_t a_dik)
+		{
+			return a_dik == kDikUp || a_dik == kDikDown || a_dik == kDikLeft || a_dik == kDikRight;
+		}
+
+		void Nudge(std::uint32_t a_dik)
+		{
+			if (a_dik == kDikUp || a_dik == kDikDown) {
+				nudgeForward.fetch_add(a_dik == kDikUp ? 1 : -1);
+			} else {
+				nudgeLeft.fetch_add(a_dik == kDikLeft ? 1 : -1);
+			}
+		}
 
 		bool IsGameKey(std::uint32_t a_code)
 		{
@@ -88,7 +106,7 @@ namespace cybercraft
 			kUnknown,
 			kCyberpunk,
 			kMinecraft,
-			kPlugin,  // Insert, O: neither game sees them
+			kPlugin,  // Insert, O, the arrows: neither game sees them
 		};
 		std::array<KeyOwner, 256> keyOwner{};
 		std::array<bool, 256>     keyHeld{};
@@ -298,6 +316,8 @@ namespace cybercraft
 							Link::Get().PushInput(proto::kInOpenMenu, 0);
 						}
 						owner = KeyOwner::kPlugin;
+					} else if (IsArrow(dik)) {
+						owner = KeyOwner::kPlugin;
 					} else {
 						owner = CyberpunkKey(dik) ? KeyOwner::kCyberpunk : KeyOwner::kMinecraft;
 					}
@@ -315,6 +335,9 @@ namespace cybercraft
 				}
 				if (owner == KeyOwner::kMinecraft) {
 					PushKey(dik, down);
+				}
+				if (owner == KeyOwner::kPlugin && down && IsArrow(dik)) {
+					Nudge(dik);  // the press and its repeats
 				}
 				return true;
 			}
@@ -356,6 +379,12 @@ namespace cybercraft
 						// for it, and toggling here too flipped it straight back whenever Esc closed
 						// the menu, so Minecraft's overlay and controls never came back.
 						return keyOwner[dik & 0xFF] == KeyOwner::kCyberpunk ? pass() : 0;
+					}
+					if (IsArrow(dik) && !State().mcScreenOpen.load()) {
+						if (down) {
+							Nudge(dik);
+						}
+						return 0;
 					}
 					if (!State().mcScreenOpen.load() && dik != kDikO && !F5Locked(dik) && (dik == kDikEscape || CyberpunkKey(dik))) {
 						return pass();
@@ -478,6 +507,22 @@ namespace cybercraft
 		bool TakeAlignRequest()
 		{
 			return alignRequested.exchange(false);
+		}
+
+		std::pair<int, int> TakeNudge()
+		{
+			return { nudgeForward.exchange(0), nudgeLeft.exchange(0) };
+		}
+
+		std::pair<int, int> HeldMovement()
+		{
+			// W, S, A, D held, by scan code (so whatever the layout), asked of Windows: the routing's own
+			// record only knows keys that came as raw input. A diagnostic.
+			const auto held = [](std::uint32_t a_dik) {
+				const auto vk = ::MapVirtualKeyW(a_dik, MAPVK_VSC_TO_VK);
+				return vk != 0 && (::GetAsyncKeyState(static_cast<int>(vk)) & 0x8000) ? 1 : 0;
+			};
+			return { held(0x11) - held(0x1F), held(0x1E) - held(0x20) };
 		}
 
 		std::uint64_t GamePresses()

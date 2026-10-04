@@ -75,6 +75,11 @@ namespace cybercraft
 		// How far from a_from the first static surface towards a_to is (blocks), if any.
 		std::optional<double> HitDistance(const McVec& a_from, const McVec& a_to);
 
+		// Diagnostics: what Minecraft was sent ahead of a_feet along (a_dirX, a_dirZ), one line per
+		// eighth of a block out to a block: the sub-voxels from a quarter block under the feet to two
+		// blocks up ('#' solid), at the player's left edge, middle and right edge.
+		[[nodiscard]] std::string DescribeAhead(const McVec& a_feet, double a_dirX, double a_dirZ) const;
+
 		static constexpr int kRegionSize = 8;  // blocks per region edge (must match the Java side)
 
 	private:
@@ -146,6 +151,7 @@ namespace cybercraft
 		void SendVehicles(const std::array<std::int32_t, 3>& a_min, const std::array<std::int32_t, 3>& a_max);
 		// Water the down rays hit, as a height per block column around the player (DESIGN.md §5.2).
 		// Minecraft's own swimming physics then applies unchanged.
+		[[nodiscard]] bool SentSolid(double a_x, double a_y, double a_z) const;
 		void PublishWater();
 		void RecordWater(double a_mcX, double a_mcZ, double a_surfaceY);
 

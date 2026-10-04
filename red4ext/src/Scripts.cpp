@@ -30,7 +30,7 @@ namespace cybercraft::Scripts
 				Functions f{};
 				f.isReady = rtti::FindGlobalFunction("CyberCraftIsReady", {}, "Bool");
 				f.spawnLight = rtti::FindGlobalFunction("CyberCraftSpawnLight", { "Vector4", "Vector4", "Float", "Float", "Float", "Bool" }, "entEntityID");
-				f.spawnCollider = rtti::FindGlobalFunction("CyberCraftSpawnCollider", { "Vector4", "Vector4", "Bool" }, "entEntityID");
+				f.spawnCollider = rtti::FindGlobalFunction("CyberCraftSpawnCollider", { "Vector4", "Vector4", "Float", "Bool" }, "entEntityID");
 				f.despawn = rtti::FindGlobalFunction("CyberCraftDespawn", { "entEntityID" }, "Bool");
 				f.despawnAll = rtti::FindGlobalFunction("CyberCraftDespawnAll", {});
 				f.bodyVisible = rtti::FindGlobalFunction("CyberCraftSetPlayerBodyVisible", { "Bool" }, "Int32");
@@ -85,7 +85,7 @@ namespace cybercraft::Scripts
 		return id.hash;
 	}
 
-	std::uint64_t SpawnCollider(const CpVec& a_centre, const CpVec& a_halfExtents, bool a_obstacle)
+	std::uint64_t SpawnCollider(const CpVec& a_centre, const CpVec& a_halfExtents, float a_yaw, bool a_obstacle)
 	{
 		const auto& f = Find();
 		if (!f.complete) {
@@ -94,7 +94,7 @@ namespace cybercraft::Scripts
 		auto                   centre = Point(a_centre, 1.0f);
 		auto                   half = Point(a_halfExtents, 0.0f);
 		RED4ext::ent::EntityID id{};
-		CallStatic(f.spawnCollider, &id, centre, half, a_obstacle);
+		CallStatic(f.spawnCollider, &id, centre, half, a_yaw, a_obstacle);
 		return id.hash;
 	}
 
