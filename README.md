@@ -44,6 +44,12 @@ memory. Minecraft runs hidden in the background, and Cyberpunk draws the picture
 - **Multiplayer (Minecraft side):** friends running CyberCraft can join your Minecraft world over
   the internet. Each of you keeps your own Night City.
 
+## Screenshots
+
+| A chest under V's desk | Furnaces by V's weapon rack | Third person on a rooftop |
+| --- | --- | --- |
+| ![A Minecraft chest under the desk in V's apartment](public/chest.webp) | ![A column of Minecraft furnaces next to the weapon rack in V's apartment](public/furnaces.webp) | ![A Minecraft skin in third person on a Night City rooftop, with the Minecraft hotbar](public/third-person.webp) |
+
 ## Requirements
 
 **Cyberpunk 2077** (PC, the current patch) with [RED4ext](https://github.com/wopss/RED4ext), and
