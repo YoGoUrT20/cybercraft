@@ -10,9 +10,10 @@ import org.jspecify.annotations.Nullable;
 /**
  * Night City's water as Minecraft water: the plugin's downward collision rays note where they hit
  * water, and it sends that surface over the block columns around the player (see WaterGrid in the
- * protocol). Wherever Minecraft has air below that surface, entities treat it as water, so the
- * player swims, floats, sinks slowly and drowns there as in Minecraft water. Only entity physics
- * sees it; no blocks change.
+ * protocol). Wherever Minecraft has air below that surface, {@code Level.getFluidState} reports a
+ * water source (LevelFluidMixin), so all of Minecraft treats it as water: swimming, drowning,
+ * buckets, boats, fishing, waterlogged blocks, lava turning to obsidian, squid. No blocks change;
+ * the block state stays air, so the water never ticks, flows or gets drawn by Minecraft.
  */
 public final class CyberWater {
 	private record Grid(int originX, int originZ, int size, float[] surface) {
@@ -79,18 +80,23 @@ public final class CyberWater {
 		return false;
 	}
 
+	/** True if this cell is air under the city's water surface, so only the city's water fills it. */
+	public static boolean isCityWater(BlockGetter level, BlockPos pos) {
+		return grid != null && depthIn(pos) > 0.0F && level.getBlockState(pos).isAir();
+	}
+
 	/** The city's water in an otherwise empty (air) Minecraft cell, as a Minecraft fluid; null if none. */
 	public static @Nullable FluidState fluidAt(BlockGetter level, BlockPos pos) {
-		if (depthIn(pos) <= 0.0F || !level.getBlockState(pos).isAir()) {
-			return null;
-		}
-		return Fluids.WATER.getSource(false);
+		return isCityWater(level, pos) ? Fluids.WATER.getSource(false) : null;
 	}
 
 	/** The exact water height in a cell only the city's water fills (so floating matches its surface); -1 otherwise. */
 	public static float substitutedHeight(BlockGetter level, BlockPos pos) {
+		if (grid == null) {
+			return -1.0F;
+		}
 		float depth = depthIn(pos);
-		if (depth <= 0.0F || !level.getFluidState(pos).isEmpty() || !level.getBlockState(pos).isAir()) {
+		if (depth <= 0.0F || !level.getBlockState(pos).isAir()) {
 			return -1.0F;
 		}
 		return depth;

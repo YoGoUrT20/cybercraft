@@ -29,6 +29,8 @@ cbuffer Params : register(b0) {
 	float4 sceneParams;  // enabled, gain, floor, probe distance (blocks): lighting from Cyberpunk's picture
 	float4 tone;         // its colour kept (0 grey, 1 all), Minecraft's face shading kept, haze per metre,
 	                     // Minecraft's block light kept
+	float4 water;        // Night City's water: surface (Minecraft y), on, fade per metre under it,
+	                     // what crossing its surface takes
 };
 Texture2D atlas : register(t0);
 SamplerState samp : register(s0);
@@ -187,6 +189,18 @@ float4 PSMain(VSOut i) : SV_Target {
 	if (sceneParams.x > 0.5 && tone.z > 0) {
 		color = lerp(color, i.haze, (1.0 - exp(-length(i.world - eye.xyz) * eye.w * tone.z)) * 0.85);
 	}
+	// Seen through Night City's water (the block under it, or the eye): it fades into the water
+	// around it by how far the sight line runs under the surface, as the game's own things do. The
+	// water writes no depth, so nothing else hides a block under it.
+	if (water.y > 0.5) {
+		float under0 = water.x - eye.y, under1 = water.x - i.world.y;  // > 0: under the surface
+		float share = under0 > 0 && under1 > 0 ? 1.0
+		            : under0 > 0 || under1 > 0 ? max(under0, under1) / max(abs(under0 - under1), 1e-4) : 0.0;
+		float metres = length(i.world - eye.xyz) * saturate(share) * eye.w;
+		float keep = exp(-metres * water.z) * ((under0 > 0) != (under1 > 0) ? 1.0 - water.w : 1.0);
+		float3 murk = sceneParams.x > 0.5 ? i.haze : float3(0.02, 0.05, 0.06);
+		color = lerp(murk, color, keep);
+	}
 	// Drawn over nothing (Mix puts them in the frame): what the opaque pass keeps covers its pixel.
 	return float4(color, drawPass < 0.5 ? 1.0 : albedo.a);
 }
@@ -250,8 +264,9 @@ float4 PSOver(float4 pos : SV_Position) : SV_Target {
 			float          depthMap[4];     // scale xy, offset zw
 			float          sceneParams[4];  // enabled, gain, floor, probe distance
 			float          tone[4];         // colour kept, face shading kept, haze per metre, block light kept
+			float          water[4];        // surface (Minecraft y), on, fade per metre, surface's share
 		};
-		static_assert(sizeof(Params) == 192);
+		static_assert(sizeof(Params) == 208);
 
 		struct Section
 		{
@@ -1783,6 +1798,15 @@ float4 PSOver(float4 pos : SV_Position) : SV_Target {
 			params.light[2] = 1.0f / float(a_width);  // screen pixel -> uv of the 80x45 picture
 			params.light[3] = 1.0f / float(a_height);
 		}
+		// Under Night City's water (the surface nearest the player), blocks fade into it.
+		static const float waterFade = Config::GetFloat(L"World", L"fWaterFade", 0.15f);
+		static const float waterSurface = Config::GetFloat(L"World", L"fWaterSurface", 0.25f);
+		if (const float level = Collision::Get().WaterLevel(); !std::isnan(level) && waterFade > 0.0f) {
+			params.water[0] = level;
+			params.water[1] = 1.0f;
+			params.water[2] = waterFade;
+			params.water[3] = std::clamp(waterSurface, 0.0f, 1.0f);
+		}
 
 		// Arrows, dropped items and cracks are built around a whole block near the camera, so their
 		// floats stay small; the scene (mobs, TNT, particles) comes relative to its own origin.
@@ -1916,6 +1940,7 @@ float4 PSOver(float4 pos : SV_Position) : SV_Target {
 			params.depthParams[3] = 0.0f;  // nothing of Cyberpunk's is ever in front of them
 			params.sceneParams[3] *= 0.3f;  // the side a face turns to, at the scale of an arm
 			params.tone[2] = 0.0f;          // no haze an arm's length away
+			params.water[1] = 0.0f;         // nor water: Cyberpunk draws none over its hands either
 			const float viewOrigin[3] = { 0.0f, 0.0f, 0.0f };
 			BeginBlocks(a_commandList, dsv);
 			for (int pass = 0; pass < 2; ++pass) {

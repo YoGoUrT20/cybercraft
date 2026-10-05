@@ -140,6 +140,7 @@ namespace cybercraft
 		sent_.clear();
 		guard_.clear();
 		hits_ = 0;
+		waterLevel_.store(std::numeric_limits<float>::quiet_NaN(), std::memory_order_relaxed);
 		// kColClear drops Minecraft's car layer with the rest.
 		vehicleBlocks_.clear();
 		vehicleHash_.reset();
@@ -173,6 +174,7 @@ namespace cybercraft
 		Guard(a_playerMc);
 
 		PublishWater();
+		waterLevel_.store(NearestWater(a_playerMc), std::memory_order_relaxed);
 
 		const auto total = Samples();
 		auto       budget = cfg.rayBudget;
@@ -200,6 +202,7 @@ namespace cybercraft
 			return;
 		}
 
+		ShiftWater(a_playerMc, !sweeping_);
 		origin_ = a_playerMc;
 		sweeping_ = true;
 		if (sentHash_.size() > 20000) {
@@ -216,10 +219,6 @@ namespace cybercraft
 		std::erase_if(guard_, distant);
 		regions_.clear();  // anything half-scanned is dropped rather than sent
 		pending_.clear();
-		water_.originX = FloorI(a_playerMc.x) - int(proto::kWaterGridSize) / 2;
-		water_.originZ = FloorI(a_playerMc.z) - int(proto::kWaterGridSize) / 2;
-		std::fill(std::begin(water_.surface), std::end(water_.surface), proto::kNoWater);
-		waterDirty_ = true;
 		yMin_ = FloorI(a_playerMc.y - cfg.down);
 		yMax_ = FloorI(a_playerMc.y + cfg.up);
 
@@ -244,9 +243,9 @@ namespace cybercraft
 		});
 		if (cybercraft::Config::Diagnostics()) {
 			logger::info("collision: sweep from ({:.1f}, {:.1f}, {:.1f}), {} pillars, y {}..{} (since last: {} rays, {} hits, {} through CyberCraft's colliders, "
-						 "{} started inside a solid, {} columns out of surfaces, {} regions the guard filled in under the player)",
+						 "{} started inside a solid, {} columns out of surfaces, {} regions the guard filled in under the player, {} water surfaces)",
 				a_playerMc.x, a_playerMc.y, a_playerMc.z, pending_.size(), yMin_, yMax_, sweepRays_, sweepHits_, sweepOwn_, sweepInside_, sweepCapped_,
-				guardFills_);
+				guardFills_, waterHits_);
 		}
 		sweepRays_ = 0;
 		sweepHits_ = 0;
@@ -254,6 +253,7 @@ namespace cybercraft
 		sweepInside_ = 0;
 		sweepCapped_ = 0;
 		guardFills_ = 0;
+		waterHits_ = 0;
 	}
 
 	int Collision::Sample(Column& a_column, int a_budget)
@@ -286,6 +286,21 @@ namespace cybercraft
 		RED4ext::Vector4 hit{};
 		RED4ext::Vector4 normal{};
 		RED4ext::CName   material{};
+
+		// The water surface, once per block column in the water grid: water is its own collision
+		// group ("Water", water.physmat), which the city's groups don't include, so the down rays
+		// below go straight through it to the bottom.
+		if (a_mcX - std::floor(a_mcX) < step && a_mcZ - std::floor(a_mcZ) < step) {
+			const auto gx = FloorI(a_mcX) - water_.originX;
+			const auto gz = FloorI(a_mcZ) - water_.originZ;
+			if (gx >= 0 && gz >= 0 && gx < int(proto::kWaterGridSize) && gz < int(proto::kWaterGridSize)) {
+				++rays;
+				double surfaceY = 0.0;
+				if (WaterSurface({ x, top, z }, { x, bottom, z }, surfaceY)) {
+					RecordWater(x, z, surfaceY);
+				}
+			}
+		}
 
 		// Downward multi-hit: every surface in the column, so overhangs and the floors above
 		// the player are solid too.
@@ -621,6 +636,84 @@ namespace cybercraft
 			cell = float(a_surfaceY);  // the highest surface in the column is the one you swim in
 		}
 		waterDirty_ = true;
+	}
+
+	void Collision::ShiftWater(const McVec& a_playerMc, bool a_clear)
+	{
+		constexpr auto size = int(proto::kWaterGridSize);
+		const auto     originX = FloorI(a_playerMc.x) - size / 2;
+		const auto     originZ = FloorI(a_playerMc.z) - size / 2;
+		if (!a_clear && originX == water_.originX && originZ == water_.originZ) {
+			return;
+		}
+		// The grid follows the player, the water stays put: what's been found keeps its place, and
+		// only the columns new to the grid wait for the sweep. Cleared on every new sweep, Minecraft
+		// lost the water under the player until the sweep came back to it, and dropped out of
+		// swimming every few blocks.
+		std::array<float, proto::kWaterGridSize * proto::kWaterGridSize> moved;
+		moved.fill(proto::kNoWater);
+		if (!a_clear) {
+			for (int gz = 0; gz < size; ++gz) {
+				for (int gx = 0; gx < size; ++gx) {
+					const auto ox = gx + originX - water_.originX;
+					const auto oz = gz + originZ - water_.originZ;
+					if (ox >= 0 && oz >= 0 && ox < size && oz < size) {
+						moved[gz * size + gx] = water_.surface[oz * size + ox];
+					}
+				}
+			}
+		}
+		std::copy(moved.begin(), moved.end(), std::begin(water_.surface));
+		water_.originX = originX;
+		water_.originZ = originZ;
+		waterDirty_ = true;
+	}
+
+	float Collision::NearestWater(const McVec& a_playerMc) const
+	{
+		constexpr auto size = int(proto::kWaterGridSize);
+		float          level = std::numeric_limits<float>::quiet_NaN();
+		double         bestSq = std::numeric_limits<double>::max();
+		for (int gz = 0; gz < size; ++gz) {
+			for (int gx = 0; gx < size; ++gx) {
+				const auto surface = water_.surface[gz * size + gx];
+				if (surface == proto::kNoWater) {
+					continue;
+				}
+				const auto dx = water_.originX + gx + 0.5 - a_playerMc.x;
+				const auto dz = water_.originZ + gz + 0.5 - a_playerMc.z;
+				if (dx * dx + dz * dz < bestSq) {
+					bestSq = dx * dx + dz * dz;
+					level = surface;
+				}
+			}
+		}
+		return level;
+	}
+
+	bool Collision::WaterSurface(const McVec& a_from, const McVec& a_to, double& a_surfaceY)
+	{
+		static rtti::Method        sync{ "gameSpatialQueriesSystem", "SyncRaycastByCollisionGroup" };
+		static const RED4ext::CName kWater("Water");
+		auto*                      system = rtti::System("gameSpatialQueriesSystem");
+		if (!system || !sync.Get()) {
+			return false;
+		}
+		const auto                    from = McToCp(a_from.x, a_from.y, a_from.z);
+		const auto                    to = McToCp(a_to.x, a_to.y, a_to.z);
+		RED4ext::Vector4              fromV{ from.x, from.y, from.z, 1.0f };
+		RED4ext::Vector4              toV{ to.x, to.y, to.z, 1.0f };
+		RED4ext::physics::TraceResult result{};
+		bool                          hit = false;
+		bool                          staticOnly = false;
+		bool                          dynamicOnly = false;
+		++sweepRays_;
+		if (!sync.Call(system, &hit, fromV, toV, kWater, result, staticOnly, dynamicOnly) || !hit || !IsWater(result.material)) {
+			return false;
+		}
+		++waterHits_;
+		a_surfaceY = CpToMc(result.position.X, result.position.Y, result.position.Z).y;
+		return true;
 	}
 
 	void Collision::PublishWater()

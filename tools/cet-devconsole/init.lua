@@ -24,9 +24,44 @@ local function fmt(v)
 	return tostring(v)
 end
 
+local function pack(...)
+	return { n = select("#", ...), ... }
+end
+
+-- CET's sandbox has no load(); fall back to loadstring + setfenv, or to dofile on a scratch file
+-- with print swapped for the capture.
+local function compile(src, env)
+	if load then
+		return load(src, "cmd", "t", env)
+	end
+	if loadstring then
+		local chunk, err = loadstring(src, "cmd")
+		if chunk and setfenv then
+			setfenv(chunk, env)
+		end
+		return chunk, err
+	end
+	local f = io.open("cmd_run.lua", "w")
+	if not f then
+		return nil, "no load, loadstring or writable cmd_run.lua"
+	end
+	f:write(src)
+	f:close()
+	return function()
+		local saved = print
+		print = env.print
+		local results = pack(pcall(dofile, "cmd_run.lua"))
+		print = saved
+		if not results[1] then
+			error(results[2], 0)
+		end
+		return unpack(results, 2, results.n)
+	end
+end
+
 local function run(src, id)
 	local lines = {}
-	local env = setmetatable({}, { __index = _G })
+	local env = setmetatable({}, { __index = _G or (getfenv and getfenv(1)) })
 	env.print = function(...)
 		local parts = {}
 		for i = 1, select("#", ...) do
@@ -34,11 +69,11 @@ local function run(src, id)
 		end
 		lines[#lines + 1] = table.concat(parts, "\t")
 	end
-	local chunk, err = load(src, "cmd", "t", env)
+	local chunk, err = compile(src, env)
 	if not chunk then
 		lines[#lines + 1] = "compile error: " .. tostring(err)
 	else
-		local results = table.pack(pcall(chunk))
+		local results = pack(pcall(chunk))
 		if not results[1] then
 			lines[#lines + 1] = "error: " .. tostring(results[2])
 		else

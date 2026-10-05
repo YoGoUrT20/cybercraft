@@ -83,7 +83,7 @@ namespace cybercraft::proto
 	};
 
 	// Night City's water (the bay, canals, pools) around V, for Minecraft to treat as its own
-	// water: swimming, floating, drowning. Seqlock like CyberState.
+	// water: swimming, buckets, boats, waterlogging. Seqlock like CyberState.
 	inline constexpr std::uint32_t kWaterGridSize = 16;
 	inline constexpr float         kNoWater = -1.0e30f;
 

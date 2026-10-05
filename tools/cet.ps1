@@ -14,7 +14,8 @@ $mod = Join-Path $Game "bin\x64\plugins\cyber_engine_tweaks\mods\cybercraft_dev"
 if ($File) { $Code = Get-Content $File -Raw }
 $id = [guid]::NewGuid().ToString("N").Substring(0, 12)
 $out = Join-Path $mod "out.txt"
-Set-Content -Path (Join-Path $mod "cmd.lua") -Value ("-- $id`n" + $Code) -NoNewline -Encoding utf8
+# No BOM (Windows PowerShell 5.1's -Encoding utf8 writes one): the console matches "-- <id>" at the start.
+[IO.File]::WriteAllText((Join-Path $mod "cmd.lua"), "-- $id`n" + $Code, (New-Object Text.UTF8Encoding $false))
 $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
 while ((Get-Date) -lt $deadline) {
     if (Test-Path $out) {

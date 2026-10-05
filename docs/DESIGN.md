@@ -150,9 +150,13 @@ exposes no physics world to walk. Rays are the design, not a stopgap.
 
 ### 5.2 Water
 
-The down rays note where they hit water. That becomes a 16×16 grid of water surface heights around
-the player (`WaterGrid`), and a Mixin on Minecraft's fluid queries reports water below them, so
-Minecraft's own swimming, floating and drowning apply.
+Water is its own collision group (`Water`, material `water.physmat`), apart from the `Static` and
+`Terrain` the down rays use, so the sweep casts one more ray per block column against that group
+alone. Its hits become a 16×16 grid of water surface heights around the player (`WaterGrid`), and
+a Mixin on `Level.getFluidState` reports a water source in every air cell below them, so all of
+Minecraft treats it as water: swimming, floating and drowning, buckets (an empty one fills from
+it), boats, fishing, waterlogged blocks, lava turning to obsidian. The block state stays air, so the
+water never ticks or flows and Minecraft never draws it over Cyberpunk's.
 
 ## 6. The player
 

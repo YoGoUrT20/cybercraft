@@ -1,6 +1,7 @@
 package dev.cybercraft.mixin;
 
 import dev.cybercraft.world.CyberCollision;
+import dev.cybercraft.world.CyberWater;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.tags.FluidTags;
@@ -23,7 +24,8 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  * geometry in that cell), so it runs downhill and over bumps but not uphill;</li>
  * <li>an empty cell right under city geometry is under the ground (or an overhang), so no fluid
  * flows sideways into it;</li>
- * <li>it never enters cells the plugin hasn't sent yet (far from the player).</li>
+ * <li>it never enters cells the plugin hasn't sent yet (far from the player);</li>
+ * <li>water never runs into the city's own water (see {@link CyberWater}), which is already full.</li>
  * </ul>
  */
 @Mixin(FlowingFluid.class)
@@ -37,7 +39,14 @@ public abstract class FlowingFluidMixin {
 		Direction direction, BlockGetter level, BlockPos sourcePos, BlockState sourceState, BlockPos targetPos, BlockState targetState,
 		CallbackInfoReturnable<Boolean> cir
 	) {
-		if (!targetState.isAir() || !CyberCollision.active() || direction == Direction.UP) {
+		if (!targetState.isAir()) {
+			return;
+		}
+		if (sourceState.getFluidState().is(FluidTags.WATER) && CyberWater.isCityWater(level, targetPos)) {
+			cir.setReturnValue(false);
+			return;
+		}
+		if (!CyberCollision.active() || direction == Direction.UP) {
 			return;
 		}
 		if (!CyberCollision.isKnown(targetPos.getX(), targetPos.getY(), targetPos.getZ())) {

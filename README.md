@@ -37,7 +37,8 @@ memory. Minecraft runs hidden in the background, and Cyberpunk draws the picture
   Damage V takes in Cyberpunk becomes a Minecraft hurt.
 - **Particles:** crits, potion swirls, splashes, smoke and block debris show up on the NPCs and
   blocks they belong to.
-- **Water, time and weather:** Cyberpunk's water swims like Minecraft water. Minecraft's day and
+- **Water, time and weather:** Cyberpunk's water is Minecraft water: swim and drown in it, fill
+  buckets from it, sail boats and fish on it, waterlog blocks you place in it. Minecraft's day and
   weather follow Night City's, and `/time set night` or `/weather rain` in Minecraft change Night
   City too. Weather mods such as Enhanced Weather are picked up.
 - **Multiplayer (Minecraft side):** friends running CyberCraft can join your Minecraft world over

@@ -191,6 +191,10 @@ light. Minecraft's own light is mostly gone:
   themselves.
 - **Haze:** further off, a block fades into the picture behind it (`fHaze` per metre, up to 85%),
   as Night City's own buildings fade into its fog.
+- **Water:** under Night City's water (the surface nearest the player), a block fades into the
+  water around it by how far the sight line runs underwater (`fWaterFade` per metre), and crossing
+  the surface takes `fWaterSurface` more. The water writes no depth, so this is all that hides a
+  block under it.
 
 The hand and held item used to be part of Minecraft's overlay picture, lit by Minecraft and laid
 flat over the frame. Now, while the plugin draws them (`kCyberDrawsHand`, `bLitHand`), the Fabric mod
@@ -645,6 +649,8 @@ fLightProbe = 1.5                  ; blocks out along a face's normal its side l
 fFaceShade = 0.35                  ; how much of Minecraft's face shading is kept
 fBlockLight = 0.5                  ; warm glow near Minecraft's torches and lamps
 fHaze = 0.005                      ; fade into the picture behind, per metre of distance
+fWaterFade = 0.15                  ; fade into Night City's water, per metre the sight line runs under it
+fWaterSurface = 0.25               ; and for crossing its surface
 bLitHand = 1                       ; draw the hand and held item lit like the blocks; 0: Minecraft's overlay
 fNudgeBlocks = 0.0625              ; how far an arrow key moves the grid, in blocks
 

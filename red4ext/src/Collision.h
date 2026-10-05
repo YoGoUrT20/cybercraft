@@ -61,6 +61,10 @@ namespace cybercraft
 		// and Minecraft must not drive V through a world it cannot see.
 		[[nodiscard]] std::uint64_t Hits() const { return hits_; }
 
+		// Night City's water surface nearest the player (Minecraft y), NaN with none in the water
+		// grid. Any thread: the blocks' renderer fades what's under it.
+		[[nodiscard]] float WaterLevel() const { return waterLevel_.load(std::memory_order_relaxed); }
+
 		// Diagnostics: one straight-down ray at a Cyberpunk position through every raycast variant
 		// the game offers, each result logged.
 		static void ProbeRays(const RED4ext::Vector4& a_cpPos);
@@ -153,6 +157,12 @@ namespace cybercraft
 		// Minecraft's own swimming physics then applies unchanged.
 		[[nodiscard]] bool SentSolid(double a_x, double a_y, double a_z) const;
 		void PublishWater();
+		// The first water surface (the "Water" collision group) on a_from..a_to, as a Minecraft y.
+		bool WaterSurface(const McVec& a_from, const McVec& a_to, double& a_surfaceY);
+		// Re-centres the water grid on the player, keeping the water already found (a_clear: none).
+		void ShiftWater(const McVec& a_playerMc, bool a_clear);
+		// The water surface in the grid closest to the player (Minecraft y), NaN if none.
+		float NearestWater(const McVec& a_playerMc) const;
 		void RecordWater(double a_mcX, double a_mcZ, double a_surfaceY);
 
 		std::uint32_t                                  epoch_{ 0 };
@@ -172,10 +182,12 @@ namespace cybercraft
 		bool                                            sweeping_{ false };
 		proto::WaterGrid                                water_{};
 		bool                                            waterDirty_{ false };
+		std::atomic<float>                              waterLevel_{ std::numeric_limits<float>::quiet_NaN() };
 		std::vector<proto::ColBlock>                    scratch_;
 		std::vector<std::uint8_t>                       payload_;
 		std::uint64_t                                   hits_{ 0 };
 		std::uint64_t                                   sweepRays_{ 0 }, sweepHits_{ 0 };  // since the last sweep log
+		std::uint64_t                                   waterHits_{ 0 };                   // since the last sweep log
 		// Rays that met one of Builds' colliders and went on through: none while colliders stand
 		// around V means Cyberpunk's physics never got them, and nothing (cars included) meets them.
 		std::uint64_t                                   sweepOwn_{ 0 };
