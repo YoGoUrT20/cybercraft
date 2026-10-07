@@ -54,6 +54,10 @@ public final class DiscordPresence {
 
 	/** Every chat line (ChatComponentMixin): e4mc's "Local game hosted on domain [...]" gives the link. */
 	public static void onChat(Component message) {
+		// Only the host's own world: a guest's chat names the host's link too ("Joined abc.e4mc.link").
+		if (Minecraft.getInstance().getSingleplayerServer() == null) {
+			return;
+		}
 		String link = findLink(message);
 		if (link != null) {
 			hostLink = link;
