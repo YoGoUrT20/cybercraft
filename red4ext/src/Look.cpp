@@ -187,7 +187,10 @@ namespace cybercraft::Look
 				}
 				return true;
 			}
-			if (pin.verified || (pin.missed += a_seconds) < 0.3f) {
+			// Only judged once Minecraft's pitch has moved: a camera standing a little off a pitch that
+			// hasn't (a fall or a landing at the start nudges it) isn't one ignoring its limits, and
+			// giving up on them lasts the whole session.
+			if (pin.verified || !pin.moved || (pin.missed += a_seconds) < 1.0f) {
 				return true;
 			}
 			if (!pin.flipped && -a_cameraPitch >= lo && -a_cameraPitch <= hi) {
@@ -234,7 +237,9 @@ namespace cybercraft::Look
 				// hardly matters.
 				if (std::abs(m.dy) >= 500.0f) {
 					const float sample = std::abs(m.tilt / m.dy);
-					if (sample > 1e-4f && sample < 10.0f) {
+					// One needing more than the scale's own range is a camera that barely moved (still
+					// settling, or held), not Cyberpunk's sensitivity: kept out, or it would set a 20x tilt.
+					if (sample > 1e-4f && sample < 10.0f && factor / sample <= 20.0f && factor / sample >= 0.05f) {
 						if (m.gain == 0.0f) {
 							logger::info("look: Cyberpunk tilts {:.4f} degrees per count, turning is {:.4f}: up and down scaled by {:.2f}", sample, factor,
 								factor / sample);
