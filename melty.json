@@ -1,0 +1,98 @@
+{
+  "schemaVersion": 1,
+  "mode": "installed",
+  "games": [
+    {
+      "slug": "cyberpunk-2077",
+      "role": "primary"
+    },
+    {
+      "slug": "minecraft-java",
+      "role": "companion"
+    }
+  ],
+  "components": [
+    {
+      "id": "main",
+      "fileName": "CyberCraft-*.zip",
+      "label": "CyberCraft",
+      "kind": "main",
+      "required": true
+    },
+    {
+      "id": "codeware",
+      "fileName": "Codeware-*.zip",
+      "label": "Codeware by psiberx (MIT): lights, colliders, third person, weather",
+      "kind": "extra",
+      "required": true
+    },
+    {
+      "id": "modsettings",
+      "fileName": "mod_settings_v*.zip",
+      "label": "Mod Settings by jackhumbert (MIT): CyberCraft's options in the pause menu",
+      "kind": "optional",
+      "required": false
+    }
+  ],
+  "requirements": [
+    {
+      "kind": "loader",
+      "id": "red4ext"
+    },
+    {
+      "kind": "loader",
+      "id": "redscript"
+    },
+    {
+      "kind": "loader",
+      "id": "archivexl"
+    }
+  ],
+  "mappings": [
+    {
+      "component": "main",
+      "from": "archive/",
+      "to": "{game}/archive"
+    },
+    {
+      "component": "main",
+      "from": "red4ext/",
+      "to": "{game}/red4ext"
+    },
+    {
+      "component": "codeware",
+      "from": "red4ext/",
+      "to": "{game}/red4ext"
+    },
+    {
+      "component": "modsettings",
+      "from": "red4ext/",
+      "to": "{game}/red4ext"
+    }
+  ],
+  "launch": {
+    "kind": "game",
+    "args": [
+      "--launcher-skip"
+    ]
+  },
+  "runtimeData": [
+    "{localappdata}/CyberCraft"
+  ],
+  "notes": {
+    "firstLaunch": "The first time, CyberCraft unpacks its Minecraft and Prism Launcher opens a small window asking you to sign in with the Microsoft account that owns Minecraft: Java Edition. Alt-Tab to it, sign in and go back to the game; Prism then downloads Minecraft and Java (a few minutes, once). After that Minecraft starts hidden with the game and takes over V once a save has loaded."
+  },
+  "multiplayer": {
+    "maxPlayers": 100,
+    "connect": {
+      "address": {
+        "log": "{localappdata}/CyberCraft/Prism/instances/CyberCraft/.minecraft/logs/latest.log",
+        "after": "this world is open to friends at "
+      },
+      "joinFile": {
+        "path": "{localappdata}/CyberCraft/Prism/instances/CyberCraft/.minecraft/config/cybercraft.properties",
+        "key": "join"
+      }
+    }
+  }
+}

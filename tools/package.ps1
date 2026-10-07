@@ -2,8 +2,11 @@
 #   CyberCraft-<version>.zip           the Cyberpunk 2077 mod (unpack into the game folder, or install
 #                                      with Vortex): the RED4ext plugin and CyberCraft-Minecraft.zip,
 #                                      the Minecraft it starts
-#   CyberCraft-<version>-pdb.zip       the plugin's debug symbols, for reading crash logs
+#   CyberCraftSymbols-<version>.zip    the plugin's debug symbols, for reading crash logs
 #   cybercraft-fabric-<version>.jar      the Minecraft mod on its own (for your own launcher)
+#   Codeware-<version>.zip, mod_settings_v<version>.zip
+#                                      the unmodified releases of the two mods CyberCraft uses, as
+#                                      Melty installs them alongside it (melty.json)
 #
 # CyberCraft-Minecraft.zip holds a portable Prism Launcher with a ready "CyberCraft" instance
 # (Minecraft 26.3, Fabric, Fabric API, the mod). The plugin unpacks it to %LOCALAPPDATA%\CyberCraft
@@ -30,6 +33,13 @@ $e4mcJar = "e4mc-fabric-6.2.2-modern.jar"
 $e4mcUrl = "https://cdn.modrinth.com/data/qANg5Jrr/versions/AouleFRY/e4mc-fabric-6.2.2-modern.jar"
 $e4mcSha512 = "01ef0a8c5b76e2cb0effd337bad3350d8807d100d0ec661e01b2ffb20af7b652f756c5eaa11bee233c37905bfd7b573f7a85f3d15bfd2833962c76f02cd59a86"
 $fabricApiSha512 = "ed6b2586d6fde11fde8472f5a527c51e99b67026e46f94d4bfd85e7e28ce5ee299173ee16ad576ceb51f39f98d30a811086a6deb1a86a524859cc16e12da109d"
+# Shipped next to the release for Melty (melty.json), as their authors publish them (both MIT).
+$codewareZip = "Codeware-1.20.5.zip"
+$codewareUrl = "https://github.com/psiberx/cp2077-codeware/releases/download/v1.20.5/$codewareZip"
+$codewareSha256 = "102989e199bad650fe6e53395c22bac53fdd7abecc6eeec3b0046886631591f0"
+$modSettingsZip = "mod_settings_v0.2.21.zip"
+$modSettingsUrl = "https://github.com/jackhumbert/mod_settings/releases/download/v0.2.21/$modSettingsZip"
+$modSettingsSha256 = "7efa862a688e61002979de06ed0e7dcf0205f8d480c28aa91d8063721f27ce1f"
 
 function Get-Pinned([string]$url, [string]$path, [string]$algorithm, [string]$hash) {
     if (-not (Test-Path $path)) {
@@ -87,6 +97,8 @@ Get-Pinned $prismUrl "$cache\$prismZip" SHA256 $prismSha256
 Get-Pinned $fabricApiUrl "$cache\$fabricApiJar" SHA512 $fabricApiSha512
 Get-Pinned $e4mcUrl "$cache\$e4mcJar" SHA512 $e4mcSha512
 Get-Pinned $prismLicenseUrl "$cache\PrismLauncher-$prismVersion-LICENSE.txt" "" ""
+Get-Pinned $codewareUrl "$cache\$codewareZip" SHA256 $codewareSha256
+Get-Pinned $modSettingsUrl "$cache\$modSettingsZip" SHA256 $modSettingsSha256
 
 $dist = "$root\dist"
 New-Item -ItemType Directory $dist -Force | Out-Null
@@ -119,8 +131,10 @@ New-Zip "$dist\CyberCraft-$version.zip" ([ordered]@{
     "red4ext/plugins/CyberCraft/THIRD-PARTY-NOTICES.md" = "$root\THIRD-PARTY-NOTICES.md"
     "archive/pc/mod/CyberCraft.archive" = "$root\red4ext\archive\CyberCraft.archive"
 })
-New-Zip "$dist\CyberCraft-$version-pdb.zip" ([ordered]@{ "CyberCraft.pdb" = $pdb })
+# Not CyberCraft-<version>-pdb.zip: melty.json's CyberCraft-*.zip would match it too.
+New-Zip "$dist\CyberCraftSymbols-$version.zip" ([ordered]@{ "CyberCraft.pdb" = $pdb })
 Copy-Item $jar "$dist\cybercraft-fabric-$modVersion.jar"
+Copy-Item "$cache\$codewareZip", "$cache\$modSettingsZip" $dist
 Remove-Item "$dist\CyberCraft-Minecraft.zip"
 
 Get-ChildItem $dist | ForEach-Object { "{0,-40} {1,12:N0} bytes" -f $_.Name, $_.Length }

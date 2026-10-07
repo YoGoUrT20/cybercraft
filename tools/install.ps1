@@ -66,7 +66,7 @@ if (Get-Process -Name "Cyberpunk2077" -ErrorAction SilentlyContinue) {
 
 # The release zip, exactly what a player would install.
 if ($NoBuild) { & "$PSScriptRoot\package.ps1" -NoBuild } else { & "$PSScriptRoot\package.ps1" }
-$release = Get-ChildItem "$root\dist" -Filter "CyberCraft-*.zip" | Where-Object { $_.Name -notmatch '-pdb\.zip$' } | Select-Object -First 1
+$release = Get-ChildItem "$root\dist" -Filter "CyberCraft-*.zip" | Select-Object -First 1
 if (-not $release) { throw "no release zip in $root\dist" }
 "Installing $($release.Name)"
 
