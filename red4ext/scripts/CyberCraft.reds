@@ -423,7 +423,8 @@ public static func CyberCraftSetMcHealth(on: Bool) -> Bool {
   if !IsDefined(player) {
     return false;
   }
-  if player.cyberCraftMcHealth != on {
+  // The game's compiler has no != for Bool.
+  if (player.cyberCraftMcHealth && !on) || (!player.cyberCraftMcHealth && on) {
     player.cyberCraftMcHealth = on;
     player.cyberCraftHurt = 0.0;
     if IsDefined(player.cyberCraftHealthBar) {
