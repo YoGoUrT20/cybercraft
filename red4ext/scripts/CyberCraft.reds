@@ -7,9 +7,9 @@
 // and get their light or collider once they have their entity ID (Entity/Initialize: at
 // Entity/Assemble it isn't assigned yet, so nothing matched and no collider was ever added; World
 // Builder adds its components at Initialize too). Without Codeware none of this is compiled,
-// and the plugin finds nothing to call. The last four functions (an NPC Minecraft hit reacts, is F
-// Cyberpunk's right now, V's weapons locked away, her collision off in dug-out city) are vanilla
-// and always there.
+// and the plugin finds nothing to call. The functions after those (an NPC Minecraft hit reacts, is F
+// Cyberpunk's right now, V's weapons locked away, her health Minecraft's, her collision off in
+// dug-out city) are vanilla and always there.
 
 @if(ModuleExists("Codeware"))
 public class CyberCraftSpawn {
@@ -400,6 +400,89 @@ public static func CyberCraftSetWeaponsBlocked(blocked: Bool) -> Bool {
     return false;
   }
   return ours;
+}
+
+// V's health is Minecraft's while Minecraft runs (Combat.cpp): her hearts are the only health there
+// is. A hit on V deals her nothing here; what it would have taken, in percent of her health, is
+// kept for the plugin, which hurts Minecraft's player with it (in creative, nothing). Whatever
+// else takes her health (burning, a fall) the plugin sees as a drop, passes on the same way and
+// fills back up. Cyberpunk's health bar stays hidden meanwhile. Unsaved fields, so a save keeps
+// none of it. Vanilla only.
+@addField(PlayerPuppet)
+public let cyberCraftMcHealth: Bool;
+
+@addField(PlayerPuppet)
+public let cyberCraftHurt: Float;
+
+@addField(PlayerPuppet)
+public let cyberCraftHealthBar: wref<healthbarWidgetGameController>;
+
+// Returns whether it could be set.
+public static func CyberCraftSetMcHealth(on: Bool) -> Bool {
+  let player = GetPlayer(GetGameInstance());
+  if !IsDefined(player) {
+    return false;
+  }
+  if player.cyberCraftMcHealth != on {
+    player.cyberCraftMcHealth = on;
+    player.cyberCraftHurt = 0.0;
+    if IsDefined(player.cyberCraftHealthBar) {
+      player.cyberCraftHealthBar.RequestHealthBarVisibilityUpdate();
+    }
+  }
+  return true;
+}
+
+// The health percent hits took off V since the last call, which then starts again from zero.
+public static func CyberCraftTakeHurt() -> Float {
+  let player = GetPlayer(GetGameInstance());
+  if !IsDefined(player) {
+    return 0.0;
+  }
+  let hurt = player.cyberCraftHurt;
+  player.cyberCraftHurt = 0.0;
+  return hurt;
+}
+
+@wrapMethod(DamageSystem)
+private final func DealDamages(hitEvent: ref<gameHitEvent>) {
+  let player = hitEvent.target as PlayerPuppet;
+  if IsDefined(player) && player.cyberCraftMcHealth {
+    let values = hitEvent.attackComputed.GetAttackValues();
+    let total = 0.0;
+    let i = 0;
+    while i < ArraySize(values) {
+      total += values[i];
+      values[i] = 0.0;
+      i += 1;
+    }
+    let max = GameInstance.GetStatPoolsSystem(player.GetGame())
+      .GetStatPoolMaxPointValue(Cast<StatsObjectID>(player.GetEntityID()), gamedataStatPoolType.Health);
+    if total > 0.0 && max > 0.0 {
+      player.cyberCraftHurt += total / max * 100.0;
+    }
+    hitEvent.attackComputed.SetAttackValues(values);
+  }
+  wrappedMethod(hitEvent);
+}
+
+@wrapMethod(healthbarWidgetGameController)
+protected cb func OnPlayerAttach(playerGameObject: ref<GameObject>) -> Bool {
+  let player = playerGameObject as PlayerPuppet;
+  if IsDefined(player) {
+    player.cyberCraftHealthBar = this;
+  }
+  return wrappedMethod(playerGameObject);
+}
+
+@wrapMethod(healthbarWidgetGameController)
+protected cb func OnUpdateHealthBarVisibility() -> Bool {
+  let player = GetPlayer(GetGameInstance());
+  if IsDefined(player) && player.cyberCraftMcHealth {
+    this.HideRequest();
+    return true;
+  }
+  return wrappedMethod();
 }
 
 // V through Night City where Minecraft dug it out (Game.cpp): the city's own colliders are still

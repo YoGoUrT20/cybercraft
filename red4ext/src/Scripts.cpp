@@ -176,6 +176,33 @@ namespace cybercraft::Scripts
 		return on;
 	}
 
+	std::optional<bool> SetMcHealth(bool a_on)
+	{
+		static RED4ext::CBaseFunction* const fn = [] {
+			auto* found = rtti::FindGlobalFunction("CyberCraftSetMcHealth", { "Bool" }, "Bool");
+			if (!found) {
+				logger::warn("combat: CyberCraftSetMcHealth isn't in the scripts; V keeps Cyberpunk's health and health bar");
+			}
+			return found;
+		}();
+		bool on = a_on;
+		bool set = false;
+		if (!fn || !CallStatic(fn, &set, on)) {
+			return std::nullopt;
+		}
+		return set;
+	}
+
+	std::optional<float> TakeHurt()
+	{
+		static RED4ext::CBaseFunction* const fn = rtti::FindGlobalFunction("CyberCraftTakeHurt", {}, "Float");
+		float hurt = 0.0f;
+		if (!fn || !CallStatic(fn, &hurt)) {
+			return std::nullopt;
+		}
+		return hurt;
+	}
+
 	std::optional<bool> SetCollisionOff(bool a_off)
 	{
 		static RED4ext::CBaseFunction* const fn = [] {

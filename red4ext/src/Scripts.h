@@ -34,6 +34,13 @@ namespace cybercraft::Scripts
 	// script. Returns whether this plugin's restriction is on V now; empty when the script isn't loaded.
 	std::optional<bool> SetWeaponsBlocked(bool a_blocked);
 
+	// V's health Minecraft's (hits deal her nothing, Cyberpunk's health bar hidden) or Cyberpunk's
+	// again. Vanilla script. Returns whether it was set; empty when the script isn't loaded.
+	std::optional<bool> SetMcHealth(bool a_on);
+	// The health percent hits took off V since the last call, while her health is Minecraft's.
+	// Vanilla script; empty when the script isn't loaded.
+	std::optional<float> TakeHurt();
+
 	// V's own collision off (she passes through the city's colliders) or back on, from her next
 	// movement update. Vanilla script. Returns whether it was set; empty when the script isn't loaded.
 	std::optional<bool> SetCollisionOff(bool a_off);

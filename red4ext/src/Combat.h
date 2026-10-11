@@ -21,4 +21,9 @@ namespace cybercraft::Combat
 
 	// Minecraft reconnected: forget mirrored actors and the health baseline.
 	void Reset();
+
+	// Once per frame once a save is loaded: a_mc is whether V's health is Minecraft's now (it runs
+	// and is in its world). Then nothing in Cyberpunk takes her health for good: what would have
+	// becomes Minecraft damage, and only Minecraft's death kills her.
+	void SyncHealth(bool a_mc, float a_delta);
 }

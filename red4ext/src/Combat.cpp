@@ -65,6 +65,13 @@ namespace cybercraft::Combat
 		std::uint32_t                                    nextId = 1;
 		float                                            lastPlayerHealth = -1.0f;
 
+		// V's health is Minecraft's (CyberCraftSetMcHealth): set again every second like the
+		// weapons, as a load starts her without it.
+		bool                                  mcHealthWanted = false;
+		bool                                  mcHealth = false;
+		float                                 mcHealthRecheck = 0.0f;
+		std::chrono::steady_clock::time_point killedAt{};  // Minecraft's player died and V with it
+
 		// NPCs mirrored lately. One stays mirrored for a while after it leaves the crosshair, so
 		// what Minecraft put on its stand-in carries on instead of going with it: potion effects
 		// (their swirls, poison's ticks), and arrows and thrown potions still on their way to it.
@@ -373,7 +380,9 @@ namespace cybercraft::Combat
 			Link::Get().WriteActors(count ? records.data() : nullptr, count);
 		}
 
-		// Cyberpunk hurt V: Minecraft takes the same hit, scaled down (DESIGN.md §13).
+		// Cyberpunk hurt V: Minecraft takes the same hit, scaled down (DESIGN.md §13). While her
+		// health is Minecraft's, hits took nothing off it (the script kept what they would have), and
+		// whatever else did (burning, a fall) is given back: Minecraft's hearts took it instead.
 		void MirrorPlayerHealth()
 		{
 			auto player = rtti::Player();
@@ -382,19 +391,26 @@ namespace cybercraft::Combat
 				State().vDead = false;
 				return;
 			}
-			const auto health = HealthFraction(EntityIdOf(player));
+			const auto id = EntityIdOf(player);
+			const auto health = HealthFraction(id);
 			if (health < 0.0f) {
 				return;
 			}
 			State().vDead = health == 0.0f;
+			float lostPercent = mcHealth ? Scripts::TakeHurt().value_or(0.0f) : 0.0f;
 			if (lastPlayerHealth >= 0.0f && health < lastPlayerHealth) {
-				const float lostPercent = (lastPlayerHealth - health) * 100.0f;
-				const float mcDamage = lostPercent * Config().fromGame;
-				if (mcDamage > 0.01f) {
-					Link::Get().PushInput(proto::kInHurt, proto::kHurtOther, static_cast<std::int32_t>(mcDamage * 100.0f), 0, 0);
-				}
+				lostPercent += (lastPlayerHealth - health) * 100.0f;
 			}
+			const float mcDamage = lostPercent * Config().fromGame;
+			if (mcDamage > 0.01f) {
+				Link::Get().PushInput(proto::kInHurt, proto::kHurtOther, static_cast<std::int32_t>(mcDamage * 100.0f), 0, 0);
+			}
+			// The refill may land a frame later: until then she reads the same, which is no loss.
 			lastPlayerHealth = health;
+			const bool dying = std::chrono::steady_clock::now() - killedAt < std::chrono::seconds(5);
+			if (mcHealth && !dying && health > 0.0f && health < 0.999f) {
+				ChangeHealth(id, 100.0f, player);
+			}
 		}
 
 		// What the NPC does about a Minecraft hit, besides losing health (CyberCraftNpcHit): it cries
@@ -453,6 +469,7 @@ namespace cybercraft::Combat
 				// itself ends the puppeting a frame or so before this event arrives.
 				if (player && std::chrono::steady_clock::now() - State().lastPuppeted < std::chrono::seconds(2)) {
 					logger::info("combat: the Minecraft player died; killing V");
+					killedAt = std::chrono::steady_clock::now();
 					ChangeHealth(EntityIdOf(player), -100.0f, player);
 				} else {
 					logger::info("combat: the Minecraft player died while Cyberpunk had V; V lives");
@@ -481,6 +498,22 @@ namespace cybercraft::Combat
 		nextId = 1;
 		lastPlayerHealth = -1.0f;
 		remembered.clear();
+	}
+
+	void SyncHealth(bool a_mc, float a_delta)
+	{
+		mcHealthRecheck -= a_delta;
+		if (a_mc == mcHealthWanted && mcHealthRecheck > 0.0f) {
+			return;
+		}
+		mcHealthWanted = a_mc;
+		mcHealthRecheck = 1.0f;
+		const auto set = Scripts::SetMcHealth(a_mc);
+		const bool on = a_mc && set && *set;
+		if (on != mcHealth) {
+			logger::info("combat: V's health is {}", on ? "Minecraft's: Cyberpunk's hits go to its hearts, its health bar hidden" : "Cyberpunk's again");
+		}
+		mcHealth = on;
 	}
 
 	void Update(const McVec& a_playerMc)

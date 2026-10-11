@@ -41,7 +41,8 @@ memory. Minecraft runs hidden in the background, and Cyberpunk draws the picture
   and armour in V's place.
 - **Combat:** hit NPCs with any Minecraft weapon, bow, trident, potion or TNT. Minecraft works out
   the hit (reach, cooldown, crits, shields) and the damage lands on the NPC's health in Cyberpunk.
-  Damage V takes in Cyberpunk becomes a Minecraft hurt.
+  Damage V takes in Cyberpunk becomes a Minecraft hurt: her health is Minecraft's hearts alone
+  (none in creative), and Cyberpunk's health bar stays hidden.
 - **Particles:** crits, potion swirls, splashes, smoke and block debris show up on the NPCs and
   blocks they belong to.
 - **Water, time and weather:** Cyberpunk's water is Minecraft water: swim and drown in it, fill

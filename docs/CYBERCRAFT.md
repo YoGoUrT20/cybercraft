@@ -388,8 +388,12 @@ Minecraft's fire, drawn on its stand-in like the fire on a burning mob (not yet 
 for its distance), so the radius sweep for mirroring is the same call with a different filter.
 
 Damage crosses the link as the design intends: Minecraft resolves the swing (reach, cooldown,
-crits, shields) and only the result is applied, as a health-pool change. V's own health is polled
-rather than hooked; a drop becomes a Minecraft hurt event.
+crits, shields) and only the result is applied, as a health-pool change. V's health is
+Minecraft's while Minecraft is in its world: a hit on V deals her nothing (`DamageSystem.DealDamages`
+is wrapped and keeps what it would have taken), any other drop (burning, a fall) is polled and
+filled back up, and both become a Minecraft hurt event, which creative ignores. Cyberpunk's health
+bar stays hidden (`healthbarWidgetGameController`); only Minecraft's hearts show, and only
+Minecraft's death kills V.
 
 A health-pool change skips the game's hit pipeline and the NPC's own reactions with it, so
 `CyberCraftNpcHit` (vanilla script) gives two back. The NPC cries out, as for any damaging hit

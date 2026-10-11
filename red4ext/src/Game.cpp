@@ -684,6 +684,7 @@ namespace cybercraft
 				WriteIdleState(link, proto::kCyberDisabled);
 				// "Open Minecraft settings" has nothing to open now.
 				ModSettings::Update(false);
+				Combat::SyncHealth(false, delta);
 				return;
 			}
 			if (!loggedLoadIn) {
@@ -991,6 +992,8 @@ namespace cybercraft
 			Collision::Get().Update(here);
 			// Cars meet Minecraft's player only while it drives V: in one, it rides inside V's.
 			Collision::Get().UpdateVehicles(here, puppet);
+			// V's health is Minecraft's whenever Minecraft is in its world, in a car too.
+			Combat::SyncHealth(haveMc && st.mcInWorld, delta);
 			Combat::Update(here);
 			if (haveMc && st.mcInWorld) {
 				Builds::Update(here);
