@@ -535,6 +535,7 @@ public final class CyberLink {
 	}
 
 	/** Seqlock write of the world-entity table and block selection. Render thread only. */
+	/** {@code selection}: the outline's box (min x, y, z, max x, y, z) and an opaque atlas rect for its edges, or null. */
 	public static void writeWorldEntities(java.util.List<WorldEntity> entities, float[] selection) {
 		MemorySegment s = shm;
 		if (s == null) {
@@ -550,6 +551,9 @@ public final class CyberLink {
 		if (selection != null) {
 			for (int i = 0; i < 6; i++) {
 				s.set(JAVA_FLOAT, b + WE_SEL_MIN + i * 4L, selection[i]);
+			}
+			for (int i = 0; i < 4; i++) {
+				s.set(JAVA_FLOAT, b + WE_SEL_UV + i * 4L, selection.length >= 10 ? selection[6 + i] : 0.0F);
 			}
 		}
 		for (int i = 0; i < count; i++) {

@@ -20,7 +20,7 @@ namespace cybercraft::ThirdPerson
 		const Settings& Config()
 		{
 			static const Settings settings{ Config::GetBool(L"ThirdPerson", L"bEnable", true), Config::GetBool(L"ThirdPerson", L"bOrbitPitch", false),
-				Config::GetBool(L"Body", L"bHideV", true), Config::GetBool(L"Body", L"bMinecraftBody", true),
+				Config::GetBool(L"Body", L"bHideV", true), Config::GetBool(L"Body", L"bMinecraftBody", false),
 				std::clamp(Config::GetFloat(L"Body", L"fBack", 0.2f), 0.0f, 1.0f) };
 			return settings;
 		}
@@ -72,7 +72,7 @@ namespace cybercraft::ThirdPerson
 				return;
 			}
 			if (!hidden) {
-				logger::info("body: {} parts of V hidden, Minecraft's body in her place", count);
+				logger::info("body: {} parts of V hidden", count);
 			} else if (++laterHides <= 8) {
 				logger::info("body: {} more parts of V hidden (they came on since)", count);
 			}
@@ -105,7 +105,7 @@ namespace cybercraft::ThirdPerson
 	}
 
 	void Update(const rtti::Handle<rtti::IScriptable>& a_player, std::uint32_t a_mode, float a_distance, float a_mcYaw, float a_mcPitch,
-		const McVec& a_headMc, float a_eyeShift)
+		const McVec& a_headMc, float a_eyeShift, const RED4ext::Vector4& a_lean)
 	{
 		const auto& cfg = Config();
 		const bool  third = cfg.enable && (a_mode == 1 || a_mode == 2);
@@ -155,6 +155,11 @@ namespace cybercraft::ThirdPerson
 			const double shift = a_eyeShift;  // down when negative
 			position.Y += cfg.orbitPitch ? 0.0f : float(shift * std::sin(cpPitch));
 			position.Z += cfg.orbitPitch ? float(shift) : float(shift * std::cos(cpPitch));
+		}
+		if (!third) {
+			position.X += a_lean.X;
+			position.Y += a_lean.Y;
+			position.Z += a_lean.Z;
 		}
 		if (third) {
 			// Minecraft's own distance (4 blocks by default, shorter where its blocks are in the way),

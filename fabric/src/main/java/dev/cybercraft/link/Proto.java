@@ -8,7 +8,7 @@ public final class Proto {
 	}
 
 	public static final int MAGIC = 0x52425943; // "CYBR" in memory
-	public static final int VERSION = 16;
+	public static final int VERSION = 17;
 	// The Cyberpunk plugin (red4ext/) creates Local\CyberCraft_v1. A second client on the same PC
 	// (multiplayer testing) talks to its own stand-in for the game:
 	// -Dcybercraft.link=Local\CyberCraft_guest (see tools/fake_guest.py).
@@ -91,6 +91,7 @@ public final class Proto {
 	public static final long WE_HAS_SELECTION = 0x08;
 	public static final long WE_SEL_MIN = 0x0C;
 	public static final long WE_SEL_MAX = 0x18;
+	public static final long WE_SEL_UV = 0x24;
 	public static final long WE_RECORDS = 0x40;
 	public static final long WORLD_ENTITY_BYTES = 96;
 	public static final int WE_ARROW = 1;
@@ -118,6 +119,7 @@ public final class Proto {
 	public static final int REN_SOLIDS = 10;
 	public static final int REN_DUG = 11;
 	public static final int REN_HAND = 12;
+	public static final int REN_MOUNT = 13;
 	public static final int PART_HEAD = 1, PART_BODY = 2, PART_RIGHT_ARM = 3, PART_LEFT_ARM = 4, PART_RIGHT_LEG = 5, PART_LEFT_LEG = 6;
 	public static final int LIGHT_STEADY = 0, LIGHT_FLAME = 1, LIGHT_LAVA = 2;
 	public static final int REN_VERTEX_BYTES = 32;
@@ -239,6 +241,9 @@ public final class Proto {
 	public static final int COL_REGION = 2;
 	public static final int COL_TRIS = 3;
 	public static final int COL_VEHICLES = 4;
+	public static final int COL_GRID_MOVED = 5;
+	public static final int COL_GRID_MOVED_BYTES = 72;
+	public static final int GRID_MOVED_SHIFT = 1;
 	public static final int COL_TRI_BYTES = 40;
 	public static final int TRI_STAIR_HELPER = 1;
 	public static final int TRI_DIGGABLE = 2;

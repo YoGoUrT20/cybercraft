@@ -62,7 +62,7 @@ public final class CyberClip {
 	/**
 	 * Where the segment, having gone through dug cells, first enters an undug cell inside the
 	 * geometry (the wall of a hole, drawn by the client's DigWalls), before segment parameter
-	 * {@code limit}; or null. Never a hit with Cyberpunk: nothing is dug without triangles (CyberDig).
+	 * {@code limit}; or null.
 	 */
 	static CyberRay.Hit digWall(Vec3 from, Vec3 to, double limit) {
 		CyberDig.DugLookup dug = CyberDig.clientDug;
@@ -103,7 +103,20 @@ public final class CyberClip {
 				return null;
 			}
 			boolean isDug = dug.isDug(x, y, z);
-			if (wasDug && !isDug) {
+			if (wasDug && !isDug && !CyberCollision.hasTriangles()) {
+				// From the plugin's voxels: ground under the surface, or the part of a cell the surface
+				// runs through that's under it (DigWalls draws it so), unless the dug cell just left stood
+				// free (DigWalls draws nothing round it).
+				if (CyberDig.freeStanding(x + (int) nx, y + (int) ny, z + (int) nz)) {
+					wasDug = isDug;
+					continue;
+				}
+				double py = from.y + dy * t;
+				int kind = CyberDig.classifyVoxel(x, y, z);
+				if (kind > CyberDig.AIR || (kind == CyberDig.PARTIAL && py - y <= CyberDig.partialTop(x, y, z) + 1e-4)) {
+					return new CyberRay.Hit(t, from.x + dx * t, py, from.z + dz * t, nx, ny, nz, STONE_WALL);
+				}
+			} else if (wasDug && !isDug) {
 				double px = from.x + dx * t, py = from.y + dy * t, pz = from.z + dz * t;
 				if (probe == null) {
 					probe = new CyberDig.Probe().around(Math.min(from.x, to.x), Math.min(from.y, to.y), Math.min(from.z, to.z), Math.max(from.x, to.x), Math.max(from.y, to.y),
@@ -134,9 +147,10 @@ public final class CyberClip {
 		return hit;
 	}
 
-	// What a voxel hit stands in for: a plain, undiggable surface (the plugin's voxels carry no
-	// material Minecraft could dig into).
-	private static final CyberTri VOXEL_SURFACE = new CyberTri(new float[9], 0, 0);
+	// What a voxel hit stands in for: the city's surface, dug like stone (the plugin's voxels carry
+	// no material of their own).
+	private static final CyberTri VOXEL_SURFACE = new CyberTri(new float[9], 0,
+		dev.cybercraft.link.Proto.TRI_DIGGABLE | (dev.cybercraft.link.Proto.DIG_STONE << dev.cybercraft.link.Proto.TRI_MATERIAL_SHIFT));
 
 	/**
 	 * The plugin sends the city as voxels only, never triangles: the nearest voxel the segment

@@ -146,6 +146,11 @@ namespace cybercraft
 		vehicleHash_.reset();
 	}
 
+	void Collision::SendGridMoved(const proto::ColGridMoved& a_move)
+	{
+		gridMoves_.push_back(a_move);
+	}
+
 	int Collision::Samples() const
 	{
 		const auto edge = kRegionSize * Config().samplesPerBlock;
@@ -161,6 +166,13 @@ namespace cybercraft
 		auto& link = Link::Get();
 		if (!link.Valid() || !link.McAlive()) {
 			return;
+		}
+		// Grid moves first: Minecraft moves the holes while it still has the city as it was.
+		while (!gridMoves_.empty()) {
+			if (!link.WriteCollision(proto::kColGridMoved, &gridMoves_.front(), sizeof(proto::ColGridMoved))) {
+				return;  // ring full: next frame
+			}
+			gridMoves_.erase(gridMoves_.begin());
 		}
 		if (!cleared_) {
 			if (!link.WriteCollision(proto::kColClear, &epoch_, sizeof(epoch_))) {
@@ -1003,6 +1015,17 @@ namespace cybercraft
 			return std::nullopt;
 		}
 		return static_cast<double>(hit.Y);
+	}
+
+	std::optional<McVec> Collision::FirstHit(const McVec& a_from, const McVec& a_to)
+	{
+		RED4ext::Vector4 hit{};
+		RED4ext::Vector4 normal{};
+		RED4ext::CName   material{};
+		if (!Raycast(a_from, a_to, hit, normal, material)) {
+			return std::nullopt;
+		}
+		return McVec{ hit.X, hit.Y, hit.Z };
 	}
 
 	std::optional<double> Collision::HitDistance(const McVec& a_from, const McVec& a_to)

@@ -51,13 +51,17 @@ public final class CyberNet {
 		}
 	}
 
-	/** Client -> server: the player hit the host's geometry in this block (CyberDig.open). */
-	public record DigOpen(int world, BlockPos pos, int material) implements CustomPacketPayload {
+	/**
+	 * Client -> server: the player mined the host's geometry out of this block (CyberDig.open);
+	 * {@code surface}: the height of the surface mined from above, NaN for a wall.
+	 */
+	public record DigOpen(int world, BlockPos pos, int material, float surface) implements CustomPacketPayload {
 		public static final Type<DigOpen> TYPE = new Type<>(Identifier.fromNamespaceAndPath(CyberCraft.MOD_ID, "dig_open"));
 		public static final StreamCodec<RegistryFriendlyByteBuf, DigOpen> CODEC = StreamCodec.composite(
 			ByteBufCodecs.INT, DigOpen::world,
 			BlockPos.STREAM_CODEC, DigOpen::pos,
 			ByteBufCodecs.VAR_INT, DigOpen::material,
+			ByteBufCodecs.FLOAT, DigOpen::surface,
 			DigOpen::new
 		);
 
@@ -83,13 +87,34 @@ public final class CyberNet {
 		}
 	}
 
+	/** Client -> server: the middle button on the city: pick the block of this Proto.DIG_* material. */
+	public record PickCity(int material) implements CustomPacketPayload {
+		public static final Type<PickCity> TYPE = new Type<>(Identifier.fromNamespaceAndPath(CyberCraft.MOD_ID, "pick_city"));
+		public static final StreamCodec<RegistryFriendlyByteBuf, PickCity> CODEC = StreamCodec.composite(
+			ByteBufCodecs.VAR_INT, PickCity::material,
+			PickCity::new
+		);
+
+		@Override
+		public Type<? extends CustomPacketPayload> type() {
+			return TYPE;
+		}
+	}
+
 	public static void init() {
 		PayloadTypeRegistry.serverboundPlay().register(Hurt.TYPE, Hurt.CODEC);
 		PayloadTypeRegistry.serverboundPlay().register(DigOpen.TYPE, DigOpen.CODEC);
 		PayloadTypeRegistry.serverboundPlay().register(DigReveal.TYPE, DigReveal.CODEC);
+		PayloadTypeRegistry.serverboundPlay().register(PickCity.TYPE, PickCity.CODEC);
+		ServerPlayNetworking.registerGlobalReceiver(PickCity.TYPE, (payload, context) -> {
+			ServerPlayer player = context.player();
+			var stack = new net.minecraft.world.item.ItemStack(CyberDig.materialState(payload.material()).getBlock());
+			// As vanilla picks a block: from the inventory, or given with infinite materials.
+			context.server().execute(() -> ((dev.cybercraft.mixin.ServerGamePacketListenerAccessor) player.connection).cybercraft$tryPickItem(stack));
+		});
 		ServerPlayNetworking.registerGlobalReceiver(DigOpen.TYPE, (payload, context) -> {
 			ServerPlayer player = context.player();
-			context.server().execute(() -> CyberDig.open(player, payload.world(), payload.pos(), payload.material()));
+			context.server().execute(() -> CyberDig.open(player, payload.world(), payload.pos(), payload.material(), payload.surface()));
 		});
 		ServerPlayNetworking.registerGlobalReceiver(DigReveal.TYPE, (payload, context) -> {
 			ServerPlayer player = context.player();

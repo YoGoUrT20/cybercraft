@@ -176,6 +176,23 @@ namespace cybercraft::Scripts
 		return on;
 	}
 
+	std::optional<bool> SetCollisionOff(bool a_off)
+	{
+		static RED4ext::CBaseFunction* const fn = [] {
+			auto* found = rtti::FindGlobalFunction("CyberCraftSetCollisionOff", { "Bool" }, "Bool");
+			if (!found) {
+				logger::warn("puppet: CyberCraftSetCollisionOff isn't in the scripts; Cyberpunk pushes V out of what Minecraft dug away");
+			}
+			return found;
+		}();
+		bool off = a_off;
+		bool set = false;
+		if (!fn || !CallStatic(fn, &set, off)) {
+			return std::nullopt;
+		}
+		return set;
+	}
+
 	std::optional<bool> NpcHit(const RED4ext::Handle<RED4ext::IScriptable>& a_npc, const CpVec& a_impulse)
 	{
 		static RED4ext::CBaseFunction* const fn = [] {

@@ -1,5 +1,6 @@
 package dev.cybercraft.client.render;
 
+import dev.cybercraft.world.CyberCollision;
 import dev.cybercraft.world.CyberDig;
 import dev.cybercraft.world.CyberTri;
 import java.util.ArrayList;
@@ -17,12 +18,16 @@ import net.minecraft.world.level.block.state.BlockState;
  * the part of it under the surface is drawn as Minecraft faces (dirt, stone, sand...), so a hole
  * is closed all round and nothing sticks up out of the ground.
  *
- * <p>Under the land those faces are cut exactly along the land's surface (its triangles), so they
- * meet the cut edge of the ground with no gap. Elsewhere (rock, walls, anything else) they're found
- * by sampling, in quarter-block pieces.
+ * <p>From the plugin's voxels (all Night City sends): a whole face where the neighbour is under the
+ * city's surface (until it's revealed as a block), and where the surface runs through it the part
+ * under that surface, paved with stone: up to a floor's top, so the hole's rim meets the street.
  *
- * <p>Nothing is dug in Night City: digging into the city is off (Cyberpunk's geometry can't be cut
- * open on screen), and the plugin sends none of the exact triangles this works from.
+ * <p>From exact triangles (which the plugin doesn't send): under the land those faces are cut
+ * exactly along the land's surface, so they meet the cut edge of the ground with no gap; elsewhere
+ * (rock, walls, anything else) they're found by sampling, in quarter-block pieces.
+ *
+ * <p>Where what was dug stood free (a chair: CyberDig.freeStanding) there are no walls: the cell's
+ * sides go as backdrops, which the plugin paints from its own picture round the hole.
  */
 final class DigWalls {
 	private DigWalls() {
@@ -31,6 +36,12 @@ final class DigWalls {
 	interface Out {
 		/** One quad: four corners (x, y, z, section-relative) and their atlas UVs, facing {@code normal}. */
 		void quad(float[] xyz, float[] uv, int light, Direction normal);
+
+		/**
+		 * One side of a dug cell where something stood free: four corners (section-relative), facing
+		 * {@code normal} (into the cell). The plugin paints it from Cyberpunk's picture round the hole.
+		 */
+		void backdrop(float[] xyz, Direction normal);
 	}
 
 	interface Faces {
@@ -57,15 +68,31 @@ final class DigWalls {
 				if (level.getBlockState(cell).canOcclude()) {
 					continue; // a solid block fills the dug cell: nothing to see from in it
 				}
+				if (CyberDig.freeStanding(x, y, z)) {
+					// A thing that stood free (a chair): just gone, with no ground behind it. What stood
+					// behind it was never in Cyberpunk's picture: its sides are backdrops, which the plugin
+					// paints from the picture round the hole, wherever the hole opens on more of the city.
+					for (Direction dir : WALLS) {
+						int nx = x + dir.getStepX(), ny = y + dir.getStepY(), nz = z + dir.getStepZ();
+						if (!lookup.isDug(nx, ny, nz) && !level.getBlockState(new BlockPos(nx, ny, nz)).canOcclude()) {
+							emit.backdrop(dir, x, y, z);
+						}
+					}
+					continue;
+				}
 				emit.light = LightCoordsUtil.pack(level.getBrightness(LightLayer.BLOCK, cell), level.getBrightness(LightLayer.SKY, cell));
 				for (Direction dir : WALLS) {
 					int nx = x + dir.getStepX(), ny = y + dir.getStepY(), nz = z + dir.getStepZ();
 					if (lookup.isDug(nx, ny, nz) || level.getBlockState(new BlockPos(nx, ny, nz)).canOcclude()) {
 						continue;
 					}
-					probe.around(nx, ny, nz, nx + 1, ny + 1, nz + 1);
 					emit.rects = null;
 					emit.material = -1;
+					if (!CyberCollision.hasTriangles()) {
+						voxelFace(dir, x, y, z, faces, emit);
+						continue;
+					}
+					probe.around(nx, ny, nz, nx + 1, ny + 1, nz + 1);
 					face(probe, dir, x, y, z, faces, emit);
 				}
 			}
@@ -87,6 +114,24 @@ final class DigWalls {
 			this.sy = sy;
 			this.sz = sz;
 			this.out = out;
+		}
+
+		/** The side of dug cell (x, y, z) towards {@code dir}, as a backdrop. */
+		void backdrop(Direction dir, int x, int y, int z) {
+			double[][] corners = { onFace(dir, x, y, z, 0, 0), onFace(dir, x, y, z, 1, 0), onFace(dir, x, y, z, 1, 1), onFace(dir, x, y, z, 0, 1) };
+			for (int k = 0; k < 4; k++) {
+				this.xyz[k * 3] = (float) (corners[k][0] - this.sx * 16);
+				this.xyz[k * 3 + 1] = (float) (corners[k][1] - this.sy * 16);
+				this.xyz[k * 3 + 2] = (float) (corners[k][2] - this.sz * 16);
+			}
+			this.out.backdrop(this.xyz, dir.getOpposite());
+		}
+
+		boolean textureOf(Faces faces, BlockState state) {
+			if (this.rects == null) {
+				this.rects = faces.of(state);
+			}
+			return this.rects != null;
 		}
 
 		boolean texture(Faces faces, int material, double depth) {
@@ -120,6 +165,34 @@ final class DigWalls {
 	}
 
 	// ---- the face between dug cell (x, y, z) and its neighbour in dir -------------------------
+
+	// From the plugin's voxels (CyberDig.classifyVoxel).
+	private static void voxelFace(Direction dir, int x, int y, int z, Faces faces, Emitter emit) {
+		int nx = x + dir.getStepX(), ny = y + dir.getStepY(), nz = z + dir.getStepZ();
+		int kind = CyberDig.classifyVoxel(nx, ny, nz);
+		if (kind == CyberDig.AIR || kind == CyberDig.KEEP) {
+			return;
+		}
+		// The surface's own layer is paved: stone, whatever's under it.
+		double top = kind == CyberDig.PARTIAL ? CyberDig.partialTop(nx, ny, nz) : 1.0;
+		int material = kind == CyberDig.PARTIAL ? dev.cybercraft.link.Proto.DIG_STONE : kind;
+		if (!emit.textureOf(faces, CyberDig.materialState(material))) {
+			return;
+		}
+		Direction normal = dir.getOpposite();
+		if (dir.getAxis() != Direction.Axis.Y) {
+			List<double[]> world = List.of(onFace(dir, x, y, z, 0, 0), onFace(dir, x, y, z, 1, 0), onFace(dir, x, y, z, 1, top), onFace(dir, x, y, z, 0, top));
+			List<double[]> uvs = List.of(new double[] { 0, 1 }, new double[] { 1, 1 }, new double[] { 1, 1 - top }, new double[] { 0, 1 - top });
+			emit.polygon(world, uvs, rectFor(dir), normal);
+			return;
+		}
+		// A ceiling at the cell's top; a floor at the top of what's solid under it.
+		double level = dir == Direction.UP ? y + 1 : y - 1 + top;
+		List<double[]> world = List.of(new double[] { x, level, z }, new double[] { x + 1, level, z }, new double[] { x + 1, level, z + 1 },
+			new double[] { x, level, z + 1 });
+		List<double[]> uvs = List.of(new double[] { 0, 0 }, new double[] { 1, 0 }, new double[] { 1, 1 }, new double[] { 0, 1 });
+		emit.polygon(world, uvs, rectFor(dir), normal);
+	}
 
 	private static void face(CyberDig.Probe probe, Direction dir, int x, int y, int z, Faces faces, Emitter emit) {
 		boolean vertical = dir.getAxis() != Direction.Axis.Y;

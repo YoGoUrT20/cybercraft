@@ -34,6 +34,10 @@ namespace cybercraft::Scripts
 	// script. Returns whether this plugin's restriction is on V now; empty when the script isn't loaded.
 	std::optional<bool> SetWeaponsBlocked(bool a_blocked);
 
+	// V's own collision off (she passes through the city's colliders) or back on, from her next
+	// movement update. Vanilla script. Returns whether it was set; empty when the script isn't loaded.
+	std::optional<bool> SetCollisionOff(bool a_off);
+
 	// Minecraft hurt an NPC (a gameObject): it cries out, and with a non-zero a_impulse (Cyberpunk
 	// world) it is ragdolled and sent flying. Vanilla script. Returns whether it went flying; empty
 	// when the script isn't loaded.

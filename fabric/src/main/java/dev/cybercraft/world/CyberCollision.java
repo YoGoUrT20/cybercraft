@@ -21,9 +21,13 @@ import org.jspecify.annotations.Nullable;
  * are merged into block collision queries (see BlockCollisionsMixin) so vanilla movement code
  * collides with them.
  *
+ * <p>Blocks dug out of the city (CyberDig) keep their voxels here, as the plugin keeps sending them,
+ * but every query below leaves them out: the city is gone there. The raw* queries still see them,
+ * for telling what's inside the city's ground around a hole.
+ *
  * <p>The store also takes exact triangles (Proto.COL_TRIS), for the smooth player collider
- * (TriCollider), triangle ray casts and digging (CyberDig). The plugin never sends any, so with
- * Cyberpunk that side stays empty and everything keyed off {@link #hasTriangles} is idle.
+ * (TriCollider), triangle ray casts and digging into triangles (CyberDig). The plugin never sends
+ * any, so with Cyberpunk that side stays empty and everything keyed off {@link #hasTriangles} is idle.
  */
 public final class CyberCollision {
 	/** The plugin streams collision in cubes of this many blocks. Must match its Collision::kRegionSize. */
@@ -35,6 +39,8 @@ public final class CyberCollision {
 	private static final int FILL_LOWER = 1 << 10;
 	private static final int FILL_UPPER = 1 << 11;
 	private static final int FILL_TOP_SHIFT = 12; // highest occupied of the 8 voxel layers (3 bits)
+	private static final int FILL_LAYERS_SHIFT = 15; // how many of the 8 layers have any (4 bits)
+	private static final int FILL_BOTTOM_SHIFT = 19; // lowest occupied of the 8 voxel layers (3 bits)
 	private static final ConcurrentHashMap<Long, CyberTri[]> TRIS = new ConcurrentHashMap<>();
 	// Diggable surfaces as they were before blocks were dug out of them (Proto.TRI_GHOST).
 	private static final ConcurrentHashMap<Long, CyberTri[]> GHOSTS = new ConcurrentHashMap<>();
@@ -43,7 +49,7 @@ public final class CyberCollision {
 	private static final ConcurrentHashMap<Long, Long> TRI_HASH = new ConcurrentHashMap<>();
 	private static final java.util.concurrent.ConcurrentLinkedQueue<Long> CHANGED = new java.util.concurrent.ConcurrentLinkedQueue<>();
 
-	/** Regions (min corner, as BlockPos longs) whose triangles changed since the last call. */
+	/** Regions (min corner, as BlockPos longs) whose voxels or triangles changed since the last call. */
 	public static void takeChangedRegions(java.util.function.LongConsumer out) {
 		Long key;
 		while ((key = CHANGED.poll()) != null) {
@@ -62,7 +68,20 @@ public final class CyberCollision {
 	}
 
 	public static @Nullable VoxelShape shapeAt(BlockPos pos) {
-		return SHAPES.isEmpty() ? null : SHAPES.get(pos.asLong());
+		if (SHAPES.isEmpty()) {
+			return null;
+		}
+		long key = pos.asLong();
+		return CyberDig.dugHere(key) ? null : SHAPES.get(key);
+	}
+
+	/** The city's fill info for a block, null where there's none or it was dug out. */
+	private static @Nullable Integer fill(long key) {
+		if (FILL.isEmpty()) {
+			return null;
+		}
+		Integer fill = FILL.get(key);
+		return fill == null || CyberDig.dugHere(key) ? null : fill;
 	}
 
 	/** The cars in this block, as the plugin last saw them. */
@@ -162,8 +181,9 @@ public final class CyberCollision {
 		for (int x = x0; x <= x1; x++) {
 			for (int y = y0; y <= y1; y++) {
 				for (int z = z0; z <= z1; z++) {
-					VoxelShape shape = SHAPES.get(BlockPos.asLong(x, y, z));
-					if (shape == null) {
+					long key = BlockPos.asLong(x, y, z);
+					VoxelShape shape = SHAPES.get(key);
+					if (shape == null || CyberDig.dugHere(key)) {
 						continue;
 					}
 					for (net.minecraft.world.phys.AABB part : shape.toAabbs()) {
@@ -188,7 +208,8 @@ public final class CyberCollision {
 		for (int dy = 0; dy <= depth; dy++) {
 			for (int dx = -1; dx <= 1; dx++) {
 				for (int dz = -1; dz <= 1; dz++) {
-					if (SHAPES.containsKey(BlockPos.asLong(x + dx, y - dy, z + dz))) {
+					long key = BlockPos.asLong(x + dx, y - dy, z + dz);
+					if (SHAPES.containsKey(key) && !CyberDig.dugHere(key)) {
 						return true;
 					}
 				}
@@ -199,13 +220,13 @@ public final class CyberCollision {
 
 	/** Fraction (0..1) of this block's volume that is the city's collision. */
 	public static float solidFraction(BlockPos pos) {
-		Integer fill = FILL.isEmpty() ? null : FILL.get(pos.asLong());
+		Integer fill = fill(pos.asLong());
 		return fill == null ? 0.0F : (fill & 0x3FF) / 512.0F;
 	}
 
 	/** True if any of the city's collision is in this cell. */
 	public static boolean hasGeometry(BlockPos pos) {
-		return !FILL.isEmpty() && FILL.containsKey(pos.asLong());
+		return fill(pos.asLong()) != null;
 	}
 
 	/**
@@ -213,21 +234,50 @@ public final class CyberCollision {
 	 * arrives as a thin slab (the rays only find its top), so what lies below counts as ground too.
 	 */
 	public static float groundTop(BlockPos pos) {
-		Integer fill = FILL.isEmpty() ? null : FILL.get(pos.asLong());
-		return fill == null ? 0.0F : (((fill >> FILL_TOP_SHIFT) & 7) + 1) / 8.0F;
+		Integer fill = fill(pos.asLong());
+		return fill == null ? 0.0F : top(fill);
+	}
+
+	private static float top(int fill) {
+		return (((fill >> FILL_TOP_SHIFT) & 7) + 1) / 8.0F;
 	}
 
 	/** True if the city's ground holds up whatever is in this cell (collision in its lower half or the upper half of the cell below). */
 	public static boolean supportsFromBelow(BlockPos pos) {
-		if (FILL.isEmpty()) {
-			return false;
-		}
-		Integer here = FILL.get(pos.asLong());
+		Integer here = fill(pos.asLong());
 		if (here != null && (here & FILL_LOWER) != 0) {
 			return true;
 		}
-		Integer below = FILL.get(BlockPos.asLong(pos.getX(), pos.getY() - 1, pos.getZ()));
+		Integer below = fill(BlockPos.asLong(pos.getX(), pos.getY() - 1, pos.getZ()));
 		return below != null && (below & FILL_UPPER) != 0;
+	}
+
+	// ---- as the plugin sent it, dug blocks included (CyberDig) ----------------------------------
+
+	/** True if the plugin sent any of the city's collision in this cell, dug out or not. */
+	public static boolean rawGeometry(int x, int y, int z) {
+		return !FILL.isEmpty() && FILL.containsKey(BlockPos.asLong(x, y, z));
+	}
+
+	/** How high (0..1) the city's collision the plugin sent reaches in this cell, 0 for none. */
+	public static float rawTop(int x, int y, int z) {
+		Integer fill = FILL.isEmpty() ? null : FILL.get(BlockPos.asLong(x, y, z));
+		return fill == null ? 0.0F : top(fill);
+	}
+
+	/** How high (0..1) the bottom of the city's collision the plugin sent sits in this cell, 0 for none. */
+	public static float rawBottom(int x, int y, int z) {
+		Integer fill = FILL.isEmpty() ? null : FILL.get(BlockPos.asLong(x, y, z));
+		return fill == null ? 0.0F : ((fill >> FILL_BOTTOM_SHIFT) & 7) / 8.0F;
+	}
+
+	/**
+	 * True if the city's collision in this cell is a floor: a slab a few layers thin (the ground,
+	 * a pavement, a roof), not a wall's sheet running up through it.
+	 */
+	public static boolean rawFloor(int x, int y, int z) {
+		Integer fill = FILL.isEmpty() ? null : FILL.get(BlockPos.asLong(x, y, z));
+		return fill != null && ((fill >> FILL_LAYERS_SHIFT) & 15) <= 3;
 	}
 
 	public static int blockCount() {
@@ -301,6 +351,7 @@ public final class CyberCollision {
 				case COL_REGION -> readRegion(s, payload);
 				case COL_TRIS -> readTris(s, payload);
 				case COL_VEHICLES -> readVehicles(s, payload);
+				case COL_GRID_MOVED -> readGridMoved(s, payload, payloadBytes);
 				default -> CyberCraft.LOG.warn("CyberCraft: unknown collision message {}", type);
 			}
 			tail += align8(8 + payloadBytes);
@@ -386,6 +437,21 @@ public final class CyberCollision {
 				}
 			}
 		}
+		// The walls of holes dug next to it are worked out from it (CyberDig, DigWalls).
+		CHANGED.add(BlockPos.asLong(minX, minY, minZ));
+	}
+
+	/** The grid moved under Night City: the holes dug into it move with the city (CyberDig.gridMoved). */
+	private static void readGridMoved(MemorySegment s, long p, int bytes) {
+		if (bytes < COL_GRID_MOVED_BYTES) {
+			return;
+		}
+		double[] m = new double[8];
+		for (int i = 0; i < 8; i++) {
+			m[i] = s.get(JAVA_DOUBLE, p + i * 8L);
+		}
+		int flags = s.get(JAVA_INT, p + 64);
+		CyberDig.gridMoved(new HoleMove.GridMove(m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], (flags & GRID_MOVED_SHIFT) != 0));
 	}
 
 	/** The whole car layer, replacing the last one (header box: where the plugin looked). */
@@ -470,15 +536,21 @@ public final class CyberCollision {
 		int count = 0;
 		int info = 0;
 		int top = 0;
+		int bottom = -1;
+		int layers = 0;
 		for (int y = 0; y < 8; y++) {
 			long layer = s.get(JAVA_LONG, bitsOff + y * 8L);
 			count += Long.bitCount(layer);
 			if (layer != 0) {
 				info |= y < 4 ? FILL_LOWER : FILL_UPPER;
 				top = y;
+				if (bottom < 0) {
+					bottom = y;
+				}
+				layers++;
 			}
 		}
-		return info | count | top << FILL_TOP_SHIFT;
+		return info | count | top << FILL_TOP_SHIFT | layers << FILL_LAYERS_SHIFT | Math.max(bottom, 0) << FILL_BOTTOM_SHIFT;
 	}
 
 	private static @Nullable VoxelShape buildShape(MemorySegment s, long bitsOff) {

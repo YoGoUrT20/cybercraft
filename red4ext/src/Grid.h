@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Link.h"
+
 // Minecraft's grid against Cyberpunk's world (gMetresPerBlock and gGridOffset, Link.h).
 //
 // Its size: how many metres a block is. Mod Settings' "Minecraft scale" slider when Mod Settings has
@@ -39,4 +41,21 @@ namespace cybercraft::Grid
 	// Moves the grid by (a_cpDx, a_cpDy) Cyberpunk metres, and saves it: blocks move that way in
 	// Night City.
 	void Nudge(double a_cpDx, double a_cpDy);
+
+	// The grid as it stands, to measure a change from (MovedSince, HolesFollowNudge).
+	struct Frame
+	{
+		double size, offset, yaw, shiftX, shiftY;
+	};
+	Frame Current();
+
+	// The holes dug into Night City stay where they were dug when the grid moves (kColGridMoved):
+	// where Minecraft coordinates under a_before are now. Whatever the holes still lag behind the
+	// arrows' nudges goes in with it, and is then cleared.
+	proto::ColGridMoved MovedSince(const Frame& a_before);
+
+	// After an arrow's nudge: a nudge is a few hundredths of a block, and a hole is whole blocks, so
+	// the holes lag behind (saved with the grid) until that comes to half a block, and then catch up
+	// a whole block at once: that move, or nothing.
+	std::optional<proto::ColGridMoved> HolesFollowNudge(const Frame& a_before);
 }

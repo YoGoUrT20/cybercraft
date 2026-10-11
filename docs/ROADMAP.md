@@ -6,13 +6,59 @@ where in the code it lands. Current state: [CYBERCRAFT.md](CYBERCRAFT.md). Desig
 
 ## 1. Confirm what's built but unrun
 
-Written on both sides and built, but not yet in the game: time and weather sync, third person,
-lights for light blocks, colliders for builds, and drawing with frame generation on. Third person,
+Written on both sides and built, but not yet in the game: digging into the city, time and weather
+sync, third person, lights for light blocks, colliders for builds, and drawing with frame
+generation on. Third person,
 lights and colliders need Codeware. Deploy the DLL, the
-Fabric mod, `scripts\CyberCraft.reds` and `CyberCraft.archive` together (protocol 16), then one run
+Fabric mod, `scripts\CyberCraft.reds` and `CyberCraft.archive` together (protocol 17), then one run
 with `bDiagnostics = 1` settles most of it. The log should start with
 `scripts: CyberCraft.reds is loaded`; if it says the script isn't loaded, the redscript log
 (`<game>\r6\logs\redscript_rCURRENT.log`) says why.
+
+**Digging into the city** (`CyberDig`, `DigWalls`, `World.cpp`'s `Cut`; DESIGN.md §5.3)
+
+- With a pickaxe, hold attack on a street: after deepslate's mining time a block's worth of the street
+  should vanish from the picture, with a stone rim and a dirt floor and walls in its place, and
+  drop cobblestone. Then the cells round it turn into real dirt within a second or so. If the
+  street stays drawn over the hole, the shader's leeway is too small for how far Cyberpunk's
+  visible surface sits from its collision: raise the `0.2` and `0.25` in `Cut` (0.3 and 0.35 are
+  the next to try).
+- Look into it from far off and from the side: it should stay open while within 64 blocks.
+  Further than that the street closes over it (the dug window is 128 x 64 x 128 cells round the
+  camera).
+- Jump in. Minecraft's player should fall onto the dirt and V with it, the camera with her, below
+  the street. Her collision goes off while she's in dug cells (`puppet: V's collision off` in the
+  plugin log, `back on` when she's out): the view shouldn't shake between the hole and the street,
+  and climbing out shouldn't end in a fall-death landing. Standing where a dug-out chair was, she
+  shouldn't be lifted onto it or shoved aside (`puppet: Cyberpunk moved V` lines with bDiagnostics).
+- Look up from the bottom: note whether Cyberpunk draws its street across the opening from below,
+  or nothing.
+- Dig sideways under the street, then dig through a building's wall: the walls should be stone,
+  with no Minecraft faces sticking out above the pavement round the opening.
+- Mine a chair, a bench or a bin standing on a floor: no stone walls or floor should appear round
+  the cell, nothing invisible should block you there, and no dirt should turn up over it (even
+  indoors). That piece of it should vanish from the picture, painted over with the colours round
+  it; walk round it and look through it at mobs or blocks behind: they should show. Watch the frame
+  time up close to a dug chair (`Backdrop` searches the screen for every pixel of the hole). A
+  street's or a building's wall should still get its stone.
+- With a hole near V, press Insert where the ground is a few centimetres higher or lower, and
+  turn: the hole should stay where it was dug, still opening just under the street
+  (`CyberCraft: the grid moved; N dug blocks ...` in Minecraft's log). Hold an arrow key: the hole
+  should stay put and jump back a block once the grid has moved half a block
+  (`grid: the holes dug into the city catch up ...`).
+- Turn CyberCraft off in Mod Settings while standing in a hole: V should end up on the street over
+  it (`puppet: V let go in a hole ...`), not fall under the city.
+- Without DLSS: the hole's walls and floor should show a face at a time through the opening.
+- Holding the button digs on cell after cell as it breaks Minecraft's own blocks (in creative one
+  every six ticks, in survival each as long as deepslate takes, then a short pause). The middle button on the street or a hole's rim should give stone, on ground
+  not yet revealed dirt or stone.
+
+**The camera against blocks** (`Game.cpp`'s `TakeLeanOut`)
+
+- Cyberpunk's first-person camera leans out with V's head: looking straight down it stood a third
+  of a block ahead of Minecraft's eye, inside a block Minecraft's player stood against. It's now
+  pulled back to Minecraft's eye. Stand against a block and look down: no seeing into it. Look up
+  and down quickly: the view shouldn't swim or shake; if it does, the gain (0.5) is too high.
 
 **Time and weather**
 
@@ -82,9 +128,10 @@ with `bDiagnostics = 1` settles most of it. The log should start with
 
 **V's body in first person** (`red4ext/src/ThirdPerson.cpp`, `AvatarExporter`)
 
-- Looking down in first person should show Minecraft's body (skin, chestplate, leggings, boots)
-  instead of V: `body: N parts of V hidden, Minecraft's body in her place`. No head, no arms on the
-  body (the hand is drawn on its own), nothing floating where V's clothes were.
+- Looking down in first person should show neither V nor Minecraft's legs, only the hand:
+  `body: N parts of V hidden`, nothing floating where V's clothes
+  were. With `bMinecraftBody = 1`, Minecraft's body (skin, chestplate, leggings, boots) instead: no
+  head, no arms on it (the hand is drawn on its own).
 - If clothes, hair or cyberarms still show, they hang in an attachment slot `BodySlots` in
   `CyberCraft.reds` doesn't list.
 - `fBack` (0.2 blocks): looking straight down should show the chest's front and the feet. Too
@@ -182,8 +229,8 @@ under Minecraft's hand (her weapon is holstered while Minecraft runs).
 - **Register a Discord application** for Rich Presence (with a `cybercraft` art asset) and set its
   id in `DiscordPresence.APP_ID`; until then Rich Presence is off.
 - **Drop Minecraft code this host doesn't use:** the exact-triangle collider path (`kColTris`,
-  `CyberTri`, `CyberRay`, `TriCollider`) and digging into the host's geometry (`CyberDig`,
-  `DigWalls`, craters, `kRenDug`). The plugin sends neither triangles nor dig data.
+  `TriCollider`), and the triangle side of digging (`CyberDig.Probe`, `DigWalls`' land faces,
+  `CyberDigBlast`'s craters). The plugin sends no triangles.
 - **Stale comments** in the plugin: `Puppet.cpp` says pitch reaches the view "in Phase 2" (Cyberpunk
   owns it); `World.h`
   says Cyberpunk's depth is out of reach (`SceneDepth` borrows it).
@@ -193,7 +240,5 @@ under Minecraft's hand (her weapon is holstered while Minecraft runs).
 
 ## Not planned
 
-- **Digging into Night City** (`kRenDug`). Cyberpunk's geometry can't be cut open on screen, so a
-  crater only left Minecraft's walls hanging in the air. Destruction stays off.
 - **Collision stage C.** Nothing exposes Cyberpunk's physics shapes.
 - **Dimensions and interiors.** Night City is one continuous world.

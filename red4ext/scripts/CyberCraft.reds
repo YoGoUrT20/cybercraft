@@ -7,8 +7,9 @@
 // and get their light or collider once they have their entity ID (Entity/Initialize: at
 // Entity/Assemble it isn't assigned yet, so nothing matched and no collider was ever added; World
 // Builder adds its components at Initialize too). Without Codeware none of this is compiled,
-// and the plugin finds nothing to call. The last three functions (an NPC Minecraft hit reacts, is F
-// Cyberpunk's right now, V's weapons locked away) are vanilla and always there.
+// and the plugin finds nothing to call. The last four functions (an NPC Minecraft hit reacts, is F
+// Cyberpunk's right now, V's weapons locked away, her collision off in dug-out city) are vanilla
+// and always there.
 
 @if(ModuleExists("Codeware"))
 public class CyberCraftSpawn {
@@ -399,4 +400,41 @@ public static func CyberCraftSetWeaponsBlocked(blocked: Bool) -> Bool {
     return false;
   }
   return ours;
+}
+
+// V through Night City where Minecraft dug it out (Game.cpp): the city's own colliders are still
+// there (a dug-out chair, the street over a hole), and Cyberpunk pushed her out of them every frame
+// while Minecraft put her back, so she shook back and forth. While the plugin says so, her movement
+// collides with nothing: the empty filter the game's own states take with collisionFilterPresetIsZero
+// (LocomotionTransition.SetCollisionFilter). She's placed every frame anyway; once it's off again, the
+// state she's in sets its own filter back. Vanilla only. Returns whether it could be set.
+@addField(PlayerPuppet)
+public let cyberCraftCollisionOff: Bool;
+
+@addField(PlayerPuppet)
+public let cyberCraftCollisionOffApplied: Bool;
+
+public static func CyberCraftSetCollisionOff(off: Bool) -> Bool {
+  let player = GetPlayer(GetGameInstance());
+  if !IsDefined(player) {
+    return false;
+  }
+  player.cyberCraftCollisionOff = off;
+  return true;
+}
+
+@wrapMethod(LocomotionEventsTransition)
+public func OnUpdate(timeDelta: Float, stateContext: ref<StateContext>, scriptInterface: ref<StateGameScriptInterface>) {
+  wrappedMethod(timeDelta, stateContext, scriptInterface);
+  let player = scriptInterface.executionOwner as PlayerPuppet;
+  if !IsDefined(player) {
+    return;
+  }
+  if player.cyberCraftCollisionOff {
+    scriptInterface.SetStateVectorParameter(physicsStateValue.SimulationFilter, ToVariant(SimulationFilter.ZERO()));
+    player.cyberCraftCollisionOffApplied = true;
+  } else if player.cyberCraftCollisionOffApplied {
+    this.SetCollisionFilter(scriptInterface);
+    player.cyberCraftCollisionOffApplied = false;
+  }
 }

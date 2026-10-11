@@ -28,6 +28,13 @@ memory. Minecraft runs hidden in the background, and Cyberpunk draws the picture
   buildings, cars and people. Press **Insert** while standing on a street, facing along it, to snap
   the block grid to it, so blocks sit flush on the pavement and run along the street. The **arrow
   keys** then fine-tune it a pixel at a time. The grid is saved with your Minecraft world.
+- **Dig into Night City:** mine a street, a pavement or a wall (as hard as deepslate) and a hole opens
+  in the city. Cyberpunk's picture is cut away there, and the hole is lined with Minecraft blocks:
+  dirt first, then stone with ores, then bedrock. Jump in and keep digging. Holes stay where you
+  dug them when **Insert**, the arrow keys or the scale move the grid. TNT blows holes too, and
+  stone put back where the street was brings the street back. `/clearnear <radius>` removes every
+  block within that many blocks of you and fills the holes there with the city again, its own
+  textures and all. The **City destruction** button in Minecraft's pause menu (**O**) turns digging off.
 - **Builds are real in Night City:** torches, lanterns, glowstone and lava light the streets around
   them, and NPCs, cars and bullets meet the walls you build.
 - **Third person:** Minecraft's **F5** pulls Cyberpunk's camera back and shows your Minecraft skin
@@ -169,7 +176,7 @@ fMaxPushback = 0.25                 ; metres V may stand off Minecraft's player 
 
 [Body]
 bHideV = 1                          ; 0: V's own body when you look down, as before
-bMinecraftBody = 1                  ; your Minecraft skin in her place; 0: no body at all
+bMinecraftBody = 0                  ; 1: your Minecraft legs and chest when you look down
 
 [Weather]
 bSync = 1                           ; 0: Minecraft's weather and Night City's stay apart
@@ -191,7 +198,13 @@ Java 25 and the mod jar from the release. Every key, with what it does, is in
   a fast turn. New and not yet tried in the game.
 - Collision comes from ray casts, so thin things (railings, grilles, wires) can be missed.
 - Combat follows the NPC under your crosshair and the last few you fought, not every NPC around.
-- You can't dig into the city itself.
+- Digging into the city is new and hasn't been tried in the game yet. It needs DLSS (or another
+  Streamline feature that uses depth) to cut the city open pixel by pixel; without it the hole's
+  walls show a whole face at a time. NPCs and cars still walk and drive over holes, since
+  Cyberpunk's ground is still there for them. The city's collision only has surfaces, so whatever
+  is behind a street or a wall counts as solid ground: digging through a floor never opens into
+  the room under it. Looking up from inside a hole shows whatever Cyberpunk draws from under its
+  street: the street may look see-through around the opening, or still lie across it.
 - Lights, colliders, third person and your skin in first person are new and haven't been tried in
   the game yet; how they
   should behave, and what to tune, is in [docs/ROADMAP.md](docs/ROADMAP.md).

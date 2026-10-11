@@ -21,6 +21,9 @@ namespace cybercraft::Puppet
 	// takeover teleports again rather than deciding nothing moved.
 	void Release();
 
+	// Puts V at a_feetMc once, facing a_cpYaw (Cyberpunk degrees), with Minecraft not driving her.
+	void Place(const McVec& a_feetMc, float a_cpYaw);
+
 	// Diagnostics since the last call: teleports made, how far V had moved vertically on her own
 	// between two of them (Cyberpunk's gravity on ground it can't feel), and how often and how far
 	// Cyberpunk pushed her sideways (her body against a wall Minecraft's thinner player stands at),

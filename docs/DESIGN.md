@@ -158,6 +158,56 @@ Minecraft treats it as water: swimming, floating and drowning, buckets (an empty
 it), boats, fishing, waterlogged blocks, lava turning to obsidian. The block state stays air, so the
 water never ticks or flows and Minecraft never draws it over Cyberpunk's.
 
+### 5.3 Digging into the city
+
+Cyberpunk's meshes and colliders can't be edited, so a hole exists in three places that agree:
+
+- **Minecraft's world:** mining the city's surface (a voxel hit, as hard as deepslate, dropping what stone does) marks the cell it
+  is in dug (`CyberDig`, a chunk attachment synced to every player). `CyberCollision` leaves dug
+  cells out of every query, so for Minecraft's physics, crosshair and projectiles the hole is real.
+- **Around the hole:** cells next to a dug one are classified from the voxels the plugin sent
+  (`CyberDig.classifyVoxel`). One the surface runs through stays the city's, solid up to a floor's
+  top; one under a surface (within 20 blocks) is ground: revealed as a real block, dirt for the
+  first few, stone with ores, bedrock from 16 down; one in the open (standing room on a floor, or
+  nothing over it) is air. Until a cell is revealed, `DigWalls` draws its face and `wallShape`
+  makes it solid, so a hole is always closed. Voxels only show surfaces, so everything behind one
+  is ground: a room under a dug floor isn't found.
+- **Things standing free:** a dug cell whose geometry stands on a floor right under it, is at most
+  two cells tall, and has open air (or dug cells) beside it on two sides or more and ground on none
+  (`CyberDig.freeStanding`, `CityVoxels`) is a chair, a bench, a bin, a low wall: there's no ground
+  behind it, so it's just gone, with no walls, floor, wall collision or revealed blocks round it. The
+  wall probes wrap such things in vertical sheets, which read as walls and lined the cell with stone
+  hanging in the air. What stood behind it was never in Cyberpunk's picture, so the cell's sides are
+  sent as backdrops (vertex flag bit 8): drawn behind everything else Minecraft draws, only where the
+  game's picture is cut, and painted from that picture round the hole (`World.cpp`'s `Backdrop`: the
+  first uncut pixel along eight directions, nearer ones and those deeper than the hole weighing
+  more). The thing is gone from the picture, with a smooth guess of the street behind it in its
+  place.
+- **Cyberpunk's picture:** the dug cells reach the plugin (`kRenDug`), which keeps those within 64
+  blocks of the camera as a bit grid. The block shader rebuilds where the game's depth puts each
+  pixel; if that point is in a dug cell (or 0.2 above one, or 0.25 further along the sight line,
+  since the visible surface sits a little off the collision), Cyberpunk's surface there doesn't hide
+  the blocks behind it, and the hole's walls and floor are drawn in its place. Without DLSS depth,
+  the face rays go on through dug cells instead.
+
+V is puppeted into the hole like anywhere else. The city's own colliders are still there (a dug-out
+chair, the street over a hole), and Cyberpunk lifted her out of them every frame while Minecraft put
+her back, so while her body (Minecraft's player's box, widened to her capsule and as tall as she is)
+reaches into a dug cell, and half a second after, her collision is off: `CyberCraftSetCollisionOff`,
+which a wrap of the game's `LocomotionEventsTransition.OnUpdate` turns into the empty simulation
+filter the game's own states use (`collisionFilterPresetIsZero`), and back to her state's own filter
+after. When Minecraft lets go of her for good (CyberCraft off, Minecraft gone), her collision comes
+back first, and the plugin puts her on the ground over the hole, since Cyberpunk's own ground is
+still there.
+
+**Holes belong to Night City, not to the grid.** When `Insert` or the scale move the grid, the
+plugin sends how Minecraft coordinates moved (`kColGridMoved`) and the host's server moves every
+hole (`CyberDig.remap`, `HoleMove`) and the blocks and items in it back to where it was dug,
+resampled onto the new grid, each hole raised or lowered whole blocks so it still opens just under
+the surface it was dug through (kept per hole: `CyberDig.Opening`). The arrows' nudges are
+fractions of a block, so the holes lag behind them (`fHoleLagX`/`Z` in `cybercraft-world.ini`) and
+catch up a whole block at a time, with Minecraft's player if it stands in one.
+
 ## 6. The player
 
 **Minecraft is authoritative for the player's position.**
@@ -246,7 +296,7 @@ Cyberpunk renders the world. Minecraft renders only its own things, offscreen:
 - **Occlusion:** with DLSS on, `SceneDepth` borrows the depth buffer the game hands NVIDIA
   Streamline and copies it, so blocks are hidden pixel by pixel behind the city, cars and people.
   Without it, `World::UpdateOcclusion` ray-tests block faces from the camera and hides whole faces
-  the static city stands in front of.
+  the static city stands in front of. Where the city was dug out, it hides nothing (§5.3).
 - **Frame generation** (DLSS, FSR or XeSS) owns the back buffers between the game's Present and
   dxgi's. Both layers are drawn into the swap chain the game presents (Streamline's proxy, found
   through RED4ext's GpuApi) before its Present, so frame generation takes Minecraft in with the
@@ -313,7 +363,9 @@ Each phase ends in something playable. State per phase: CYBERCRAFT.md.
 2. **Interaction:** `F` is Cyberpunk's only while it shows a prompt, rather than arbitrating
    between the two games' targets by distance.
 3. **Cyberpunk's inventory, cyberware, quickhacks and skills:** off or ignored for now.
-4. **Digging into the city:** off. Cyberpunk's geometry can't be cut open on screen.
+4. **Digging into the city:** by mining and by explosions. The voxels can't tell a room from solid
+   ground, so a blast takes the city's surfaces, and the ground under them only where nothing of the
+   city lies below (not a room over a floor); a player digging picks one cell at a time (§5.3).
 
 ## 14. Risks
 
@@ -321,7 +373,8 @@ Each phase ends in something playable. State per phase: CYBERCRAFT.md.
 |---|---|
 | Game calls found by name break with a game update | Each is looked up by exact signature where known and degrades with a log line; `bDiagnostics` dumps the real signatures |
 | Rays miss thin geometry | `iSamplesPerBlock`, horizontal probes; stage C isn't available |
-| Depth only with DLSS | Ray-tested face occlusion as the fallback |
+| Depth only with DLSS | Ray-tested face occlusion as the fallback (holes show a face at a time) |
+| V under the city's ground in a hole | Teleported every frame onto `Builds`' colliders; put back on the ground when Minecraft lets go for good |
 | Frame generation hides the overlay | Drawn into the game's own swap chain before frame generation; skipped with it on only if that swap chain isn't found |
 | Two games' RAM and GPU cost | Minecraft renders almost nothing (void world); JVM heap capped at 4 GB in the bundled instance |
 

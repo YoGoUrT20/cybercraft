@@ -14,7 +14,7 @@ import time
 import zlib
 
 MAGIC = 0x52425943  # "CYBR" in memory
-VERSION = 16
+VERSION = 17
 NAME = os.environ.get("CYBERCRAFT_LINK", "Local\\CyberCraft_v1")  # fake_guest.py runs one beside a real Cyberpunk
 OFF_CYBER_STATE = 0x100
 OFF_MC = 0x200

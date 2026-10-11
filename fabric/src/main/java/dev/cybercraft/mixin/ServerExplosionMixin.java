@@ -24,8 +24,8 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 /**
  * Minecraft explosions in Night City: the plugin hurts every NPC in their reach (Proto.EV_EXPLOSION).
- * With destruction on (CyberDig.destruction; off by default, as digging into the city is) they also
- * blow the city's ground apart like blocks (CyberDigBlast).
+ * With destruction on (CyberDig.destruction) they also blow the city's surfaces and the ground under
+ * them apart like blocks (CyberDigBlast).
  */
 @Mixin(ServerExplosion.class)
 public abstract class ServerExplosionMixin {

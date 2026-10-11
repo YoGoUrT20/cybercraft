@@ -35,26 +35,26 @@ import dev.cybercraft.link.CyberLink;
 import org.jspecify.annotations.Nullable;
 
 /**
- * Digging into the geometry that arrives as triangles (Proto.COL_TRIS). Ground, rocks and walls
- * there are geometry, not blocks; this turns them into blocks one at a time, as they're dug:
+ * Digging into Night City. Its ground and walls are the plugin's voxels (or exact triangles, which
+ * the plugin doesn't send), not blocks; this turns them into blocks one at a time, as they're dug:
  * <ul>
- * <li><b>open</b>: mining a diggable surface (as long as mining the block it's made of takes) takes
- * the cell the surface is in out: the geometry in it is gone (cut out on the sending side: not
- * drawn, no collision, nothing for NPCs to stand on), with the drops of that block. Nothing sticks
- * up out of the ground: the cell is empty.</li>
- * <li><b>reveal</b>: the cells around a mined one that are wholly inside the geometry become
- * blocks (dirt under grass, stone with ores, bedrock a few blocks under the land; endless stone
- * inside rocks). Cells only partly inside keep their surface, and the part under it shows as
- * Minecraft walls, so a hole is always closed.</li>
+ * <li><b>open</b>: mining the city's surface (as long as mining stone takes) takes the cell the
+ * surface is in out: its collision is gone for Minecraft (CyberCollision leaves dug cells out), and
+ * the plugin cuts the city out of its picture there (World.cpp, from Cyberpunk's depth), with the
+ * drops of that block. Nothing sticks up out of the ground: the cell is empty.</li>
+ * <li><b>reveal</b>: the cells around a mined one that are under the city's surface become blocks
+ * (dirt for the first few, then stone with ores, bedrock deep down). Cells the surface runs through
+ * keep it, and the part under it shows as Minecraft walls (the client's DigWalls), so a hole is
+ * always closed.</li>
  * </ul>
  * Which cells are dug is kept per chunk (saved with the world, synced to every player) and per
  * world id (CyberState.worldId), and sent over the link (Proto.REN_DUG). Opening and revealing are
- * decided by the digging player's client, which knows the geometry around them; the server just
+ * decided by the digging player's client, which knows the city around them; the server just
  * applies it.
  *
- * <p>Idle with Cyberpunk: the plugin sends no triangles and ignores REN_DUG, and its geometry can't
- * be cut open on screen (DESIGN.md §13). Without triangles nothing counts as dug (DugColumn.isDug),
- * and destruction is off by default.
+ * <p>Holes belong to Night City, not to Minecraft's grid: when Insert, the arrows or the scale move
+ * the grid, the plugin says how (Proto.COL_GRID_MOVED) and the holes, with the blocks in them, move
+ * back to where they were dug ({@link #gridMoved}).
  */
 public final class CyberDig {
 	private CyberDig() {
@@ -113,12 +113,6 @@ public final class CyberDig {
 		}
 
 		public boolean isDug(int world, int x, int y, int z) {
-			// Without triangles (the plugin sends voxels from ray casts only) there's no geometry to
-			// cut away: a dug cell only left invisible hole walls to bump into and stone surfaces
-			// hanging over a street that never opened. Old craters are ignored with it.
-			if (!CyberCollision.hasTriangles()) {
-				return false;
-			}
 			long[] bits = bits(world, y >> 4);
 			int bit = (x & 15) + 16 * (z & 15) + 256 * (y & 15);
 			return bits != null && ((bits[bit >> 6] >>> (bit & 63)) & 1L) != 0;
@@ -146,6 +140,83 @@ public final class CyberDig {
 			}
 			return new DugColumn(List.copyOf(out));
 		}
+
+		/** The same with this cell no longer dug (for that world id). */
+		DugColumn minus(int world, int x, int y, int z) {
+			int sy = y >> 4;
+			int bit = (x & 15) + 16 * (z & 15) + 256 * (y & 15);
+			List<DugSection> out = new ArrayList<>(this.sections.size());
+			for (DugSection s : this.sections) {
+				if (s.world == world && s.sectionY == sy && s.bits.length == 64) {
+					long[] bits = s.bits.clone();
+					bits[bit >> 6] &= ~(1L << (bit & 63));
+					if (Arrays.stream(bits).anyMatch(w -> w != 0)) {
+						out.add(new DugSection(world, sy, bits));
+					}
+				} else {
+					out.add(s);
+				}
+			}
+			return new DugColumn(List.copyOf(out));
+		}
+
+		/** The same without that world's dug cells. */
+		DugColumn without(int world) {
+			List<DugSection> out = new ArrayList<>(this.sections.size());
+			for (DugSection s : this.sections) {
+				if (s.world != world) {
+					out.add(s);
+				}
+			}
+			return out.size() == this.sections.size() ? this : new DugColumn(List.copyOf(out));
+		}
+
+		/** The same without that world's dug cells {@code which} picks (BlockPos longs; this is chunk cx, cz). */
+		DugColumn without(int world, int cx, int cz, java.util.function.LongPredicate which) {
+			List<DugSection> out = new ArrayList<>(this.sections.size());
+			boolean changed = false;
+			for (DugSection s : this.sections) {
+				if (s.world != world || s.bits.length != 64) {
+					out.add(s);
+					continue;
+				}
+				long[] bits = s.bits.clone();
+				boolean any = false;
+				for (int word = 0; word < 64; word++) {
+					long left = bits[word];
+					while (left != 0) {
+						int bit = word * 64 + Long.numberOfTrailingZeros(left);
+						left &= left - 1;
+						if (which.test(BlockPos.asLong(cx * 16 + (bit & 15), s.sectionY * 16 + (bit >> 8), cz * 16 + ((bit >> 4) & 15)))) {
+							bits[word] &= ~(1L << (bit & 63));
+							changed = true;
+						}
+					}
+					any |= bits[word] != 0;
+				}
+				if (any) {
+					out.add(new DugSection(world, s.sectionY, bits));
+				}
+			}
+			return changed ? new DugColumn(List.copyOf(out)) : this;
+		}
+
+		/** Every dug cell of that world in this chunk (cx, cz), as BlockPos longs. */
+		public void forEach(int world, int cx, int cz, java.util.function.LongConsumer out) {
+			for (DugSection s : this.sections) {
+				if (s.world != world || s.bits.length != 64) {
+					continue;
+				}
+				for (int word = 0; word < 64; word++) {
+					long bits = s.bits[word];
+					while (bits != 0) {
+						int bit = word * 64 + Long.numberOfTrailingZeros(bits);
+						bits &= bits - 1;
+						out.accept(BlockPos.asLong(cx * 16 + (bit & 15), s.sectionY * 16 + (bit >> 8), cz * 16 + ((bit >> 4) & 15)));
+					}
+				}
+			}
+		}
 	}
 
 	public static final AttachmentType<DugColumn> DUG = AttachmentRegistry.<DugColumn>builder()
@@ -153,9 +224,83 @@ public final class CyberDig {
 		.syncWith(DugColumn.STREAM_CODEC, AttachmentSyncPredicate.all())
 		.buildAndRegister(Identifier.fromNamespaceAndPath(CyberCraft.MOD_ID, "dug"));
 
-	/** Loads the class (registers the attachment) at mod start. */
+	/**
+	 * Where a hole was opened from above, and the height of the city's surface it went through
+	 * (Minecraft y): what puts the hole back under that surface when the grid moves up or down.
+	 */
+	public record Opening(int world, long pos, float surface) {
+		static final Codec<Opening> CODEC = RecordCodecBuilder.create(i -> i.group(
+			Codec.INT.fieldOf("world").forGetter(Opening::world),
+			Codec.LONG.fieldOf("pos").forGetter(Opening::pos),
+			Codec.FLOAT.fieldOf("surface").forGetter(Opening::surface)
+		).apply(i, Opening::new));
+	}
+
+	/** A chunk's openings (server only: nothing but the grid moving needs them). */
+	public static final AttachmentType<List<Opening>> OPENINGS = AttachmentRegistry.<List<Opening>>builder()
+		.persistent(Opening.CODEC.listOf())
+		.buildAndRegister(Identifier.fromNamespaceAndPath(CyberCraft.MOD_ID, "openings"));
+
+	/** The chunks with dug cells in them (on the level), so a grid move finds every hole, loaded or not. */
+	public static final AttachmentType<List<Long>> HOLE_CHUNKS = AttachmentRegistry.<List<Long>>builder()
+		.persistent(Codec.LONG.listOf())
+		.buildAndRegister(Identifier.fromNamespaceAndPath(CyberCraft.MOD_ID, "hole_chunks"));
+
+	private static volatile net.minecraft.server.@Nullable MinecraftServer server;
+
+	/** Loads the class (registers the attachments) at mod start. */
 	public static void init() {
+		net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents.SERVER_STARTED.register(s -> server = s);
+		net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents.SERVER_STOPPED.register(s -> {
+			server = null;
+			HERE.clear();
+		});
+		// /clearnear <radius>: every block within that many blocks goes, and every hole there is
+		// filled with the city again (its picture, walls and collision), as if never dug.
+		net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback.EVENT.register((dispatcher, context, selection) -> dispatcher.register(
+			net.minecraft.commands.Commands.literal("clearnear")
+				.requires(net.minecraft.commands.Commands.hasPermission(net.minecraft.commands.Commands.LEVEL_GAMEMASTERS))
+				.then(net.minecraft.commands.Commands.argument("radius", com.mojang.brigadier.arguments.IntegerArgumentType.integer(1, CLEAR_MAX))
+					.executes(c -> {
+						var source = c.getSource();
+						int radius = com.mojang.brigadier.arguments.IntegerArgumentType.getInteger(c, "radius");
+						Cleared cleared = clearNear(source.getLevel(), source.getPosition(), radius);
+						source.sendSuccess(() -> net.minecraft.network.chat.Component.literal(String.format(
+							"Cleared %d blocks and gave %d dug cells back to Night City within %d blocks", cleared.blocks(), cleared.cells(), radius)), true);
+						return cleared.blocks() + cleared.cells();
+					}))));
 		CyberCraft.LOG.info("CyberCraft: dug cells attachment registered ({})", DUG.identifier());
+	}
+
+	// ---- this machine's dug cells, for queries with no level at hand ----------------------------
+
+	// Night City's dug cells around this machine's player (the current world id), as BlockPos longs:
+	// mirrored from the client's chunks (CyberDigClient.pollDug) and added to at once by this machine's
+	// own server. The city's collision here is this machine's too (CyberCollision), so the two match.
+	private static final java.util.Set<Long> HERE = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+	/** True if this cell was dug out of the city. Any thread. */
+	public static boolean dugHere(long pos) {
+		return !HERE.isEmpty() && HERE.contains(pos);
+	}
+
+	public static boolean dugHere(int x, int y, int z) {
+		return dugHere(BlockPos.asLong(x, y, z));
+	}
+
+	/** The client's copy of a chunk's dug cells changed (null: none, or unloaded). */
+	public static void hereChanged(int world, int cx, int cz, @Nullable DugColumn before, @Nullable DugColumn after) {
+		if (before != null) {
+			before.forEach(world, cx, cz, HERE::remove);
+		}
+		if (after != null) {
+			after.forEach(world, cx, cz, HERE::add);
+		}
+	}
+
+	/** The client left the world, or its world id changed. */
+	public static void hereCleared() {
+		HERE.clear();
 	}
 
 	public static DugColumn column(LevelChunk chunk) {
@@ -177,19 +322,23 @@ public final class CyberDig {
 
 	/**
 	 * A player mined the geometry out of this cell (the cell the surface is in): it's gone,
-	 * with the drops and the sound of mining what it was made of.
+	 * with the drops and the sound of mining what it was made of. {@code surface}: the height of the
+	 * surface mined from above (NaN for a wall), kept for when the grid moves.
 	 */
-	public static void open(ServerPlayer player, int world, BlockPos pos, int material) {
+	public static void open(ServerPlayer player, int world, BlockPos pos, int material, float surface) {
 		ServerLevel level = player.level();
 		if (!destruction || !inReach(player, pos, REACH) || !level.isLoaded(pos) || player.isSpectator()) {
 			return;
 		}
-		LevelChunk chunk = level.getChunkAt(pos);
-		DugColumn column = column(chunk);
-		if (column.isDug(world, pos.getX(), pos.getY(), pos.getZ())) {
+		if (!markDug(level, world, pos)) {
 			return;
 		}
-		chunk.setAttached(DUG, column.with(world, pos.getX(), pos.getY(), pos.getZ()));
+		if (Float.isFinite(surface) && surface > pos.getY() - 0.5F && surface < pos.getY() + 1.5F) {
+			LevelChunk chunk = level.getChunkAt(pos);
+			List<Opening> openings = new ArrayList<>(openings(chunk));
+			openings.add(new Opening(world, pos.asLong(), surface));
+			chunk.setAttached(OPENINGS, List.copyOf(openings));
+		}
 		BlockState state = materialState(material);
 		if (!player.isCreative()) {
 			ItemStack tool = player.getMainHandItem();
@@ -219,13 +368,17 @@ public final class CyberDig {
 
 	/**
 	 * Whether Minecraft digs into the geometry at all: the pause menu's "City destruction" button
-	 * (DestructionToggle), saved in config/cybercraft.properties. Off, mining surfaces and explosions
-	 * leave it alone (and breaking blocks in old holes digs no further); holes already dug stay. In a
-	 * friend's world it's the host's setting that counts (their server does the digging).
+	 * (DestructionToggle), saved in config/cybercraft.properties, on unless it says otherwise. Off,
+	 * mining surfaces and explosions leave it alone (and breaking blocks in old holes digs no further);
+	 * holes already dug stay. In a friend's world it's the host's setting that counts (their server
+	 * does the digging).
 	 */
-	// Off by default: Cyberpunk's geometry can't be cut open on screen (DESIGN.md §13), and without
-	// triangles there's nothing to dig anyway.
-	public static volatile boolean destruction = false;
+	public static volatile boolean destruction = true;
+
+	private static List<Opening> openings(LevelChunk chunk) {
+		List<Opening> openings = chunk.getAttached(OPENINGS);
+		return openings != null ? openings : List.of();
+	}
 
 	/** Marks a cell dug out of the geometry (for that world id). Returns false if it was already. */
 	public static boolean markDug(ServerLevel level, int world, BlockPos pos) {
@@ -234,12 +387,171 @@ public final class CyberDig {
 		if (column.isDug(world, pos.getX(), pos.getY(), pos.getZ())) {
 			return false;
 		}
+		if (column.sections().isEmpty()) {
+			addHoleChunk(level, chunk.getPos().pack());
+		}
 		chunk.setAttached(DUG, column.with(world, pos.getX(), pos.getY(), pos.getZ()));
+		HERE.add(pos.asLong());
 		return true;
+	}
+
+	private static void addHoleChunk(ServerLevel level, long chunk) {
+		List<Long> chunks = level.getAttached(HOLE_CHUNKS);
+		if (chunks == null || !chunks.contains(chunk)) {
+			List<Long> out = chunks == null ? new ArrayList<>() : new ArrayList<>(chunks);
+			out.add(chunk);
+			level.setAttached(HOLE_CHUNKS, List.copyOf(out));
+		}
+	}
+
+	/**
+	 * A block just placed. Stone or cobblestone (what the city's surface is mined into) put back in a
+	 * cell dug out of the city's surface gives the city back there: the block goes, the cell isn't dug
+	 * any more, and Cyberpunk's own surface shows and holds again. Ground under the surface (no
+	 * surface in the cell) just gets the block, as anywhere.
+	 */
+	public static void placedBack(ServerLevel level, BlockPos pos) {
+		BlockState state = level.getBlockState(pos);
+		if (!state.is(Blocks.STONE) && !state.is(Blocks.COBBLESTONE)) {
+			return;
+		}
+		int x = pos.getX(), y = pos.getY(), z = pos.getZ();
+		if (!CyberCollision.rawGeometry(x, y, z)) {
+			return;
+		}
+		int world = worldFor(level);
+		LevelChunk chunk = level.getChunkAt(pos);
+		DugColumn column = column(chunk);
+		if (!column.isDug(world, x, y, z)) {
+			return;
+		}
+		// Out of the dug cells first (this machine's at once), so the block going isn't taken as a dug
+		// block broken, which reveals what's round it.
+		DugColumn left = column.minus(world, x, y, z);
+		chunk.setAttached(DUG, left.sections().isEmpty() ? null : left);
+		HERE.remove(pos.asLong());
+		List<Opening> openings = openings(chunk);
+		if (openings.stream().anyMatch(o -> o.pos() == pos.asLong())) {
+			List<Opening> keep = openings.stream().filter(o -> o.pos() != pos.asLong()).toList();
+			chunk.setAttached(OPENINGS, keep.isEmpty() ? null : keep);
+		}
+		level.setBlock(pos, Blocks.AIR.defaultBlockState(), Block.UPDATE_ALL);
+		CyberCraft.LOG.info("CyberCraft: {} put back at {}: the city is whole there again", state.getBlock().getName().getString(), pos.toShortString());
+	}
+
+	/** The biggest radius /clearnear takes. */
+	private static final int CLEAR_MAX = 64;
+
+	/** What /clearnear did: Minecraft blocks removed, dug cells given back to the city. */
+	public record Cleared(int blocks, int cells) {
+	}
+
+	/**
+	 * /clearnear: every Minecraft block within {@code radius} of {@code centre} goes (nothing drops or
+	 * spills), and every cell dug there is given back to the city, as {@link #placedBack} does for one:
+	 * Cyberpunk's own surface shows and holds again, and the Minecraft walls round it go. Anyone
+	 * standing in a hole that's gone is put on the city's surface over it. Server thread.
+	 */
+	public static Cleared clearNear(ServerLevel level, net.minecraft.world.phys.Vec3 centre, int radius) {
+		int world = worldFor(level);
+		double r2 = (double) radius * radius;
+		java.util.function.LongPredicate inside = p -> {
+			double dx = BlockPos.getX(p) + 0.5 - centre.x, dy = BlockPos.getY(p) + 0.5 - centre.y, dz = BlockPos.getZ(p) + 0.5 - centre.z;
+			return dx * dx + dy * dy + dz * dz <= r2;
+		};
+		int minX = net.minecraft.util.Mth.floor(centre.x) - radius, maxX = net.minecraft.util.Mth.floor(centre.x) + radius;
+		int minZ = net.minecraft.util.Mth.floor(centre.z) - radius, maxZ = net.minecraft.util.Mth.floor(centre.z) + radius;
+		int minY = Math.max(level.getMinY(), net.minecraft.util.Mth.floor(centre.y) - radius);
+		int maxY = Math.min(level.getMaxY(), net.minecraft.util.Mth.floor(centre.y) + radius);
+
+		// The holes first (this machine's at once), so the blocks going aren't taken as dug blocks
+		// broken, which reveals what's round them.
+		it.unimi.dsi.fastutil.longs.LongOpenHashSet given = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+		List<Long> emptied = new ArrayList<>();
+		for (int cx = minX >> 4; cx <= maxX >> 4; cx++) {
+			for (int cz = minZ >> 4; cz <= maxZ >> 4; cz++) {
+				LevelChunk chunk = level.getChunkSource().getChunkNow(cx, cz);
+				if (chunk == null) {
+					continue;
+				}
+				DugColumn column = column(chunk);
+				DugColumn left = column.without(world, cx, cz, p -> inside.test(p) && given.add(p));
+				if (left == column) {
+					continue;
+				}
+				chunk.setAttached(DUG, left.sections().isEmpty() ? null : left);
+				if (left.sections().isEmpty()) {
+					emptied.add(chunk.getPos().pack());
+				}
+				List<Opening> openings = openings(chunk);
+				List<Opening> keep = openings.stream().filter(o -> o.world() != world || !inside.test(o.pos())).toList();
+				if (keep.size() != openings.size()) {
+					chunk.setAttached(OPENINGS, keep.isEmpty() ? null : keep);
+				}
+			}
+		}
+		given.forEach((java.util.function.LongConsumer) HERE::remove);
+		List<Long> chunks = level.getAttached(HOLE_CHUNKS);
+		if (chunks != null && !emptied.isEmpty()) {
+			List<Long> registry = new ArrayList<>(chunks);
+			registry.removeAll(emptied);
+			level.setAttached(HOLE_CHUNKS, registry.isEmpty() ? null : List.copyOf(registry));
+		}
+
+		// Then the blocks, with nothing round them reacting until they're all gone.
+		it.unimi.dsi.fastutil.longs.LongArrayList cleared = new it.unimi.dsi.fastutil.longs.LongArrayList();
+		BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+		for (int x = minX; x <= maxX; x++) {
+			for (int z = minZ; z <= maxZ; z++) {
+				LevelChunk chunk = level.getChunkSource().getChunkNow(x >> 4, z >> 4);
+				if (chunk == null) {
+					continue;
+				}
+				for (int y = minY; y <= maxY; y++) {
+					long p = BlockPos.asLong(x, y, z);
+					if (!inside.test(p) || chunk.getBlockState(pos.set(x, y, z)).isAir()) {
+						continue;
+					}
+					level.setBlock(pos, Blocks.AIR.defaultBlockState(), Block.UPDATE_CLIENTS | Block.UPDATE_SKIP_ALL_SIDEEFFECTS);
+					cleared.add(p);
+				}
+			}
+		}
+		// What hung off them from outside (a torch on a wall left standing) goes too, without dropping.
+		BlockState air = Blocks.AIR.defaultBlockState();
+		for (int i = 0; i < cleared.size(); i++) {
+			air.updateNeighbourShapes(level, pos.set(cleared.getLong(i)), Block.UPDATE_CLIENTS | Block.UPDATE_SUPPRESS_DROPS);
+		}
+
+		// Anyone in a hole that's gone stands on the surface over it again, not in the void under it.
+		for (ServerPlayer player : level.players()) {
+			BlockPos feet = player.blockPosition();
+			if (!given.contains(feet.asLong()) && !given.contains(feet.above().asLong())) {
+				continue;
+			}
+			int x = feet.getX(), z = feet.getZ();
+			for (int y = feet.getY(); y <= feet.getY() + COVER_REACH; y++) {
+				if (CyberCollision.rawGeometry(x, y, z)) {
+					while (CyberCollision.rawGeometry(x, y + 1, z)) {
+						y++; // up a wall's sheet to its top
+					}
+					player.teleportTo(player.getX(), y + partialTop(x, y, z), player.getZ());
+					player.resetFallDistance();
+					break;
+				}
+			}
+		}
+		CyberCraft.LOG.info("CyberCraft: /clearnear {} at {}: {} blocks cleared, {} dug cells given back to the city", radius,
+			BlockPos.containing(centre).toShortString(), cleared.size(), given.size());
+		return new Cleared(cleared.size(), given.size());
 	}
 
 	/** A cell wholly inside the geometry: dug out of it, and the block it's made of put there. */
 	public static void digCell(ServerLevel level, int world, BlockPos pos, int material) {
+		// Never round a player: a cell they stand in is open air, whatever the city's shape says.
+		if (material > 0 && !level.getEntitiesOfClass(net.minecraft.world.entity.player.Player.class, new AABB(pos)).isEmpty()) {
+			return;
+		}
 		if (!markDug(level, world, pos)) {
 			return;
 		}
@@ -541,6 +853,9 @@ public final class CyberDig {
 	 * Only for cells next to a dug one: far from every surface means deep inside there.
 	 */
 	public static int classify(int x, int y, int z) {
+		if (!CyberCollision.hasTriangles()) {
+			return classifyVoxel(x, y, z);
+		}
 		Probe probe = new Probe().around(x, y, z, x + 1, y + 1, z + 1);
 		int inside = 0;
 		int centreMaterial = DIG_STONE;
@@ -579,6 +894,57 @@ public final class CyberDig {
 			}
 		}
 		return underground(centreMaterial, centreDepth);
+	}
+
+	// ---- the same from the plugin's voxels (all Cyberpunk sends) ---------------------------------
+
+	/** A cell the city's surface runs through: it stays the city's, and the part under it is solid. */
+	public static final int PARTIAL = -2;
+	/** How far up from a cell the city's surface over it is looked for: more than CITY_BEDROCK. */
+	private static final int COVER_REACH = CityVoxels.COVER_REACH;
+
+	/**
+	 * What a cell next to a dug one is, from the plugin's voxels, which only show surfaces: PARTIAL
+	 * where the city's surface runs through it; under a surface (within COVER_REACH) a Proto.DIG_*
+	 * material by how deep (dirt, then stone, then bedrock); AIR where there's room to stand on a
+	 * floor right under it, or nothing over it. Whatever is behind a surface is solid ground: Night
+	 * City's rooms under its floors can't be told from earth under its streets.
+	 */
+	public static int classifyVoxel(int x, int y, int z) {
+		return CityVoxels.classify(x, y, z);
+	}
+
+	/**
+	 * True if nothing of the city lies within six blocks under this cell: ground under a street rather
+	 * than a room over a floor, as far as the voxels can tell (explosions, CyberDigBlast).
+	 */
+	public static boolean openBelow(int x, int y, int z) {
+		for (int k = 1; k <= 6; k++) {
+			if (CyberCollision.rawGeometry(x, y - k, z)) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	/**
+	 * How high (0..1) the solid part of a PARTIAL cell reaches: up to a floor's top (what's under a
+	 * pavement is ground), all of it for a wall's sheet (what's behind it can't be told from voxels).
+	 */
+	public static float partialTop(int x, int y, int z) {
+		return CyberCollision.rawFloor(x, y, z) ? CyberCollision.rawTop(x, y, z) : 1.0F;
+	}
+
+	/**
+	 * True if what was in this cell stands free in the open: a chair, a bench, a bin, a low wall, a
+	 * parapet's top (CityVoxels.freeStanding: on a floor, at most two cells tall, open air beside it on
+	 * two sides or more, cells dug out counting as open). Dug out, it's just gone: there's no ground
+	 * behind it, so no walls, floor or blocks come with it (DigWalls, wallShape, CyberDigClient.reveal),
+	 * where the voxels (sheets all round a chair's sides) read as walls and lined it with stone hanging
+	 * in the air. From the plugin's voxels; any thread.
+	 */
+	public static boolean freeStanding(int x, int y, int z) {
+		return !CyberCollision.hasTriangles() && CityVoxels.freeStanding(x, y, z, CyberDig::dugHere);
 	}
 
 	/** The nearest stretch of land (terrain triangles) above a point, within 32 blocks, or null. */
@@ -633,16 +999,18 @@ public final class CyberDig {
 	/** The world id changed: every wall is worked out again. */
 	public static void wallsChanged() {
 		WALLS.clear();
+		CityVoxels.forget();
 	}
 
 	/** The triangles in this box changed: the walls that could see them are worked out again. */
 	public static void wallsChanged(int minX, int minY, int minZ, int maxX, int maxY, int maxZ) {
 		int reach = (int) Math.ceil(SEARCH) + 1;
-		int down = reach + (int) Math.ceil(LAND_REACH); // a cell looks this far up for the land over it
+		int down = reach + Math.max((int) Math.ceil(LAND_REACH), COVER_REACH); // a cell looks this far up for the ground over it
 		for (int sx = (minX - reach) >> 4; sx <= (maxX + reach) >> 4; sx++) {
 			for (int sy = (minY - down) >> 4; sy <= (maxY + reach) >> 4; sy++) {
 				for (int sz = (minZ - reach) >> 4; sz <= (maxZ + reach) >> 4; sz++) {
 					WALLS.remove(net.minecraft.core.SectionPos.asLong(sx, sy, sz));
+					CityVoxels.forget(net.minecraft.core.SectionPos.asLong(sx, sy, sz));
 				}
 			}
 		}
@@ -679,19 +1047,19 @@ public final class CyberDig {
 	 * make solid. Null for none. Any thread.
 	 */
 	public static @Nullable VoxelShape wallShape(net.minecraft.world.level.CollisionGetter getter, BlockPos pos) {
-		if (!(getter instanceof Level level) || !CyberCollision.active()) {
+		// This machine's dug cells (HERE), like the city's collision they're cut out of.
+		if (HERE.isEmpty() || !(getter instanceof Level) || !CyberCollision.active()) {
 			return null;
 		}
 		int x = pos.getX(), y = pos.getY(), z = pos.getZ();
-		DugColumn here = columnFor(getter, x, z);
-		int world = worldFor(level);
-		if (here != null && here.isDug(world, x, y, z)) {
+		if (dugHere(x, y, z)) {
 			return null;
 		}
 		boolean nextToDug = false;
 		for (Direction d : Direction.values()) {
-			DugColumn column = d.getAxis() == Direction.Axis.Y ? here : columnFor(getter, x + d.getStepX(), z + d.getStepZ());
-			if (column != null && column.isDug(world, x + d.getStepX(), y + d.getStepY(), z + d.getStepZ())) {
+			int nx = x + d.getStepX(), ny = y + d.getStepY(), nz = z + d.getStepZ();
+			// (A thing that stood free, dug out, leaves nothing solid round it.)
+			if (dugHere(nx, ny, nz) && !freeStanding(nx, ny, nz)) {
 				nextToDug = true;
 				break;
 			}
@@ -714,6 +1082,15 @@ public final class CyberDig {
 	}
 
 	private static @Nullable VoxelShape computeWall(int x, int y, int z) {
+		if (!CyberCollision.hasTriangles()) {
+			// From voxels: under a surface, solid; where a surface runs through, solid up to it.
+			int kind = classifyVoxel(x, y, z);
+			if (kind == PARTIAL) {
+				float top = partialTop(x, y, z);
+				return top >= 0.999F ? Shapes.block() : Shapes.box(0, 0, 0, 1, top, 1);
+			}
+			return kind > AIR ? Shapes.block() : null;
+		}
 		Probe probe = new Probe().around(x, y, z, x + 1, y + 1, z + 1);
 		if (!probe.land.isEmpty()) {
 			// Solid up to the lowest the land gets over the cell (never above the ground).
@@ -733,6 +1110,129 @@ public final class CyberDig {
 		}
 		// Rocks, cave walls: solid if the middle is inside.
 		return probe.test(x + 0.5, y + 0.5, z + 0.5) > AIR ? Shapes.block() : null;
+	}
+
+	// ---- the grid moving under Night City -------------------------------------------------------
+
+	/**
+	 * Collision thread: the plugin moved the grid. This machine's own server (singleplayer, or a world
+	 * opened to friends) moves every hole back under the spot of Night City it was dug in; a guest's
+	 * grid is its own business, and the holes are its host's.
+	 */
+	public static void gridMoved(HoleMove.GridMove move) {
+		net.minecraft.server.MinecraftServer s = server;
+		if (s == null) {
+			return;
+		}
+		s.execute(() -> {
+			try {
+				remap(s.overworld(), move);
+			} catch (RuntimeException e) {
+				CyberCraft.LOG.error("CyberCraft: moving the holes with the grid failed", e);
+			}
+		});
+	}
+
+	private record OldCell(BlockState state, net.minecraft.nbt.@Nullable CompoundTag entity) {
+	}
+
+	/** Server thread: every hole of this world (and what's in it) moved by {@code move}. */
+	static void remap(ServerLevel level, HoleMove.GridMove move) {
+		int world = worldFor(level);
+		List<Long> chunks = level.getAttached(HOLE_CHUNKS);
+		if (chunks == null || chunks.isEmpty()) {
+			return;
+		}
+		// Everything dug, what's in it, and where holes were opened from above.
+		it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<OldCell> old = new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
+		List<Opening> openings = new ArrayList<>();
+		for (long key : chunks) {
+			int cx = net.minecraft.world.level.ChunkPos.getX(key), cz = net.minecraft.world.level.ChunkPos.getZ(key);
+			LevelChunk chunk = level.getChunk(cx, cz);
+			column(chunk).forEach(world, cx, cz, pos -> {
+				BlockPos at = BlockPos.of(pos);
+				BlockState state = level.getBlockState(at);
+				var entity = level.getBlockEntity(at);
+				old.put(pos, new OldCell(state, entity != null ? entity.saveWithFullMetadata(level.registryAccess()) : null));
+			});
+			for (Opening o : openings(chunk)) {
+				if (o.world() == world) {
+					openings.add(o);
+				}
+			}
+		}
+		if (old.isEmpty()) {
+			return;
+		}
+		HoleMove.Plan plan = HoleMove.plan(old.keySet(), openings, move, pos -> !old.get(pos).state().isAir());
+
+		// Out of the old cells (no drops, nothing reacting), then into the new ones.
+		int flags = Block.UPDATE_CLIENTS | Block.UPDATE_SKIP_ALL_SIDEEFFECTS;
+		for (var e : old.long2ObjectEntrySet()) {
+			if (!e.getValue().state().isAir()) {
+				level.setBlock(BlockPos.of(e.getLongKey()), Blocks.AIR.defaultBlockState(), flags);
+			}
+			HERE.remove(e.getLongKey());
+		}
+		List<Long> emptied = new ArrayList<>();
+		for (long key : chunks) {
+			LevelChunk chunk = level.getChunk(net.minecraft.world.level.ChunkPos.getX(key), net.minecraft.world.level.ChunkPos.getZ(key));
+			DugColumn left = column(chunk).without(world);
+			chunk.setAttached(DUG, left.sections().isEmpty() ? null : left);
+			List<Opening> keep = new ArrayList<>();
+			for (Opening o : openings(chunk)) {
+				if (o.world() != world) {
+					keep.add(o);
+				}
+			}
+			chunk.setAttached(OPENINGS, keep.isEmpty() ? null : List.copyOf(keep));
+			if (left.sections().isEmpty()) {
+				emptied.add(key);
+			}
+		}
+		List<Long> registry = new ArrayList<>(chunks);
+		registry.removeAll(emptied);
+		level.setAttached(HOLE_CHUNKS, registry.isEmpty() ? null : List.copyOf(registry));
+
+		for (var e : plan.cells().long2LongEntrySet()) {
+			BlockPos to = BlockPos.of(e.getLongKey());
+			markDug(level, world, to);
+			OldCell from = old.get(e.getLongValue());
+			if (from == null || from.state().isAir()) {
+				continue;
+			}
+			level.setBlock(to, from.state(), flags);
+			if (from.entity() != null) {
+				var moved = net.minecraft.world.level.block.entity.BlockEntity.loadStatic(to, from.state(), from.entity(), level.registryAccess());
+				if (moved != null) {
+					level.setBlockEntity(moved);
+				}
+			}
+		}
+		for (Opening o : plan.openings()) {
+			LevelChunk chunk = level.getChunkAt(BlockPos.of(o.pos()));
+			List<Opening> list = new ArrayList<>(openings(chunk));
+			list.add(o);
+			chunk.setAttached(OPENINGS, List.copyOf(list));
+		}
+
+		// What was lying or standing in the holes goes with them (players follow V, who stays put).
+		int moved = 0;
+		for (var e : old.long2ObjectEntrySet()) {
+			BlockPos at = BlockPos.of(e.getLongKey());
+			for (var entity : level.getEntitiesOfClass(net.minecraft.world.entity.Entity.class, new AABB(at),
+				en -> !(en instanceof net.minecraft.world.entity.player.Player) && en.blockPosition().equals(at))) {
+				long to = plan.moved(e.getLongKey());
+				if (to == Long.MIN_VALUE) {
+					continue;
+				}
+				BlockPos dest = BlockPos.of(to);
+				entity.teleportTo(dest.getX() + (entity.getX() - at.getX()), dest.getY() + (entity.getY() - at.getY()), dest.getZ() + (entity.getZ() - at.getZ()));
+				moved++;
+			}
+		}
+		CyberCraft.LOG.info("CyberCraft: the grid moved; {} dug blocks ({} openings, {} things in them) moved {} with Night City", old.size(),
+			openings.size(), moved, move.shift() ? String.format("by (%.0f, %.0f, %.0f)", move.tx(), move.ty(), move.tz()) : "and turned");
 	}
 
 	/**

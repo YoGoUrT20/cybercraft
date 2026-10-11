@@ -5,11 +5,13 @@
   "mixins": [
     "AbstractArrowMixin",
     "BlockCollisionsMixin",
+    "BlockItemMixin",
     "BlockStateBaseMixin",
     "BucketItemMixin",
     "EntityFluidInteractionMixin",
     "EntityPickMixin",
     "FallingBlockMixin",
+    "FireStarterMixin",
     "FlowingFluidHeightMixin",
     "FlowingFluidMixin",
     "ItemEntityMixin",
@@ -21,6 +23,7 @@
     "ProjectileMixin",
     "ProjectileUtilMixin",
     "ServerExplosionMixin",
+    "ServerGamePacketListenerAccessor",
     "ServerPlayerMixin"
   ],
   "injectors": { "defaultRequire": 1 }

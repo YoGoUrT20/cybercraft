@@ -60,6 +60,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 import net.minecraft.util.FormattedCharSequence;
 import net.minecraft.util.LightCoordsUtil;
+import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.projectile.arrow.AbstractArrow;
@@ -78,12 +79,12 @@ import org.jspecify.annotations.Nullable;
  * goes over with its textures. The plugin draws it in Cyberpunk's frame and lights it like the
  * blocks, from Cyberpunk's own picture around it.
  *
- * <p>Two captures a frame: the player's body in third person (F5), relative to its feet (the
+ * <p>Three captures a frame: the player's body in third person (F5), relative to its feet (the
  * plugin stands it where V is in the frame its camera was read from, so it can't drift from the
- * camera; in first person too, without head and arms, when the plugin hides V there); and
- * everything else (lit TNT, falling blocks, minecarts, boats, ..., block entities (chests, beds,
- * signs, banners, pistons while they move, ...) and all particles) relative to a block near the
- * camera. The first-person hands are captured while Minecraft renders them (beginHand). Arrows and
+ * camera; in first person too, without head and arms, when the plugin hides V there); what the
+ * player rides, the same way; and everything else (lit TNT, falling blocks, minecarts, boats, ...,
+ * block entities (chests, beds, signs, banners, pistons while they move, ...) and all particles)
+ * relative to a block near the camera. The first-person hands are captured while Minecraft renders them (beginHand). Arrows and
  * most dropped items have their own lighter path (WorldExporter). Render thread only.
  */
 final class AvatarExporter implements SubmitNodeCollector {
@@ -110,6 +111,7 @@ final class AvatarExporter implements SubmitNodeCollector {
 	private static boolean warnedEntity;
 
 	private static final AvatarExporter AVATAR = new AvatarExporter();
+	private static final AvatarExporter MOUNT = new AvatarExporter();
 	private static final AvatarExporter SCENE = new AvatarExporter();
 	private static final AvatarExporter RAGDOLL = new AvatarExporter();
 	private static long nextRagdollNanos;
@@ -137,6 +139,7 @@ final class AvatarExporter implements SubmitNodeCollector {
 		UNUSABLE.clear();
 		nextTextureId = 1;
 		AVATAR.shown = false;
+		MOUNT.shown = false;
 		SCENE.shown = false;
 		RAGDOLL.shown = false;
 		HAND.shown = false;
@@ -147,6 +150,7 @@ final class AvatarExporter implements SubmitNodeCollector {
 
 	static void frame(Minecraft minecraft, CyberAtlas atlas, float partialTick) {
 		AVATAR.exportAvatar(minecraft, atlas, partialTick);
+		MOUNT.exportMount(minecraft, atlas, partialTick);
 		SCENE.exportScene(minecraft, atlas, partialTick);
 		// The hands Minecraft rendered this frame (none in third person, with the HUD hidden, or
 		// when the plugin doesn't draw them).
@@ -246,6 +250,45 @@ final class AvatarExporter implements SubmitNodeCollector {
 			avatar.arrowCount = avatar.stingerCount = 0;
 			avatar.parrotOnLeftShoulder = avatar.parrotOnRightShoulder = null;
 		}
+	}
+
+	/**
+	 * What the player rides (a boat, a minecart, a horse, ...) and whoever else rides it, relative to
+	 * the player's feet like the body. In the scene it stood where Minecraft had it at its own frame's
+	 * partial tick, while Cyberpunk's camera follows V's feet on Cyberpunk's frame clock: the boat
+	 * jumped about under V by however far apart the two were. Stood at V's feet, it stays under her.
+	 */
+	private void exportMount(Minecraft minecraft, CyberAtlas atlas, float partialTick) {
+		this.atlas = atlas;
+		var player = minecraft.player;
+		if (player == null || !player.isPassenger()) {
+			this.sendEmpty(Proto.REN_MOUNT, null);
+			return;
+		}
+		this.begin();
+		var dispatcher = minecraft.getEntityRenderDispatcher();
+		dispatcher.prepare(minecraft.gameRenderer.mainCamera(), minecraft.crosshairPickEntity);
+		CameraRenderState cameraState = minecraft.gameRenderer.gameRenderState().levelRenderState.cameraRenderState;
+		PoseStack pose = new PoseStack();
+		// The player's feet as its renderer has them (EntityRenderer.extractRenderState).
+		double feetX = Mth.lerp(partialTick, player.xOld, player.getX());
+		double feetY = Mth.lerp(partialTick, player.yOld, player.getY());
+		double feetZ = Mth.lerp(partialTick, player.zOld, player.getZ());
+		for (Entity e : player.getRootVehicle().getSelfAndPassengers().toList()) {
+			if (e == player || e instanceof NpcEntity && !e.displayFireAnimation()) {
+				continue;
+			}
+			try {
+				EntityRenderState state = dispatcher.extractEntity(e, partialTick);
+				dispatcher.submit(state, cameraState, state.x - feetX, state.y - feetY, state.z - feetZ, pose, this);
+			} catch (RuntimeException ex) {
+				if (!warnedEntity) {
+					warnedEntity = true;
+					CyberCraft.LOG.warn("CyberCraft: couldn't capture {} for Cyberpunk", e, ex);
+				}
+			}
+		}
+		this.send(Proto.REN_MOUNT, null);
 	}
 
 	/**
@@ -381,12 +424,13 @@ final class AvatarExporter implements SubmitNodeCollector {
 		dispatcher.prepare(camera, minecraft.crosshairPickEntity);
 		CameraRenderState cameraState = minecraft.gameRenderer.gameRenderState().levelRenderState.cameraRenderState;
 		PoseStack pose = new PoseStack();
+		Entity ridden = player.isPassenger() ? player.getRootVehicle() : null;
 		int entities = 0;
 		for (Entity e : level.entitiesForRendering()) {
-			// Arrows and dropped items one flat sprite can show are WorldExporter's. An NPC's
-			// stand-in draws nothing itself, but Minecraft sets it alight (Fire Aspect, flame arrows,
-			// ...): its fire goes on the NPC.
-			if (e == player || e instanceof ItemEntity && !WorldExporter.leftToScene(e) || e instanceof AbstractArrow
+			// Arrows and dropped items one flat sprite can show are WorldExporter's, what the player
+			// rides exportMount's. An NPC's stand-in draws nothing itself, but Minecraft sets it alight
+			// (Fire Aspect, flame arrows, ...): its fire goes on the NPC.
+			if (e == player || ridden != null && e.getRootVehicle() == ridden || e instanceof ItemEntity && !WorldExporter.leftToScene(e) || e instanceof AbstractArrow
 				|| e instanceof NpcEntity && !e.displayFireAnimation() || e.distanceToSqr(cam) > SCENE_RANGE * SCENE_RANGE
 				|| entities >= SCENE_MAX_ENTITIES) {
 				continue;

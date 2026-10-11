@@ -20,9 +20,13 @@ import org.jspecify.annotations.Nullable;
  * the explosion to break the normal way (drops and all), dug out of the geometry. The crater is then
  * lined like a dug hole (CyberDig).
  *
- * Needs the triangles around the blast, which only the host's Minecraft has (the integrated server
- * shares its CyberCollision): a guest's explosions far from the host leave the geometry alone. Idle
- * with Cyberpunk, like all digging: the plugin sends no triangles.
+ * Needs the city's collision around the blast, which only the host's Minecraft has (the integrated
+ * server shares its CyberCollision): a guest's explosions far from the host leave the city alone.
+ *
+ * <p>From the plugin's voxels: the city's surfaces (streets, pavements, walls) go like stone, and the
+ * ground under them like the dirt and stone it is, but only ground with nothing of the city under it
+ * (CyberDig.openBelow): the voxels can't tell a room from solid ground, and a blast in one filled it
+ * with stone. A room's walls and floor still go; DigWalls closes the hole behind them, as mining does.
  */
 public final class CyberDigBlast {
 	/** Blast resistance of what can't be dug (buildings): stops a blast like obsidian. */
@@ -49,7 +53,7 @@ public final class CyberDigBlast {
 		Vec3 c = explosion.center();
 		// Without triangles every probe reads "deep in rock" (CyberDig.Probe), so the air around a blast
 		// soaked it up like stone and its crater's stone lining was left hanging in the air.
-		if (!CyberDig.destruction || !CyberCollision.hasTriangles() || !CyberCollision.active()
+		if (!CyberDig.destruction || !CyberCollision.active()
 			|| !CyberCollision.isKnown((int) Math.floor(c.x), (int) Math.floor(c.y), (int) Math.floor(c.z)) || !CyberLink.readCyberState(STATE)) {
 			return null;
 		}
@@ -68,7 +72,12 @@ public final class CyberDigBlast {
 			return known;
 		}
 		int result = 0;
-		if (this.level.getBlockState(pos).isAir() && !CyberDig.isDug(this.level, this.world, pos)) {
+		if (this.level.getBlockState(pos).isAir() && !CyberDig.isDug(this.level, this.world, pos) && !CyberCollision.hasTriangles()) {
+			int kind = CyberDig.classifyVoxel(pos.getX(), pos.getY(), pos.getZ());
+			// The surface as cobblestone, what mining it gives; the ground as it is (dirt, stone with ores).
+			result = kind == CyberDig.PARTIAL ? dev.cybercraft.link.Proto.DIG_COBBLE
+				: kind > CyberDig.AIR && CyberDig.openBelow(pos.getX(), pos.getY(), pos.getZ()) ? kind : 0;
+		} else if (this.level.getBlockState(pos).isAir() && !CyberDig.isDug(this.level, this.world, pos)) {
 			for (double sy : SAMPLE) {
 				for (double sz : SAMPLE) {
 					for (double sx : SAMPLE) {
@@ -135,7 +144,8 @@ public final class CyberDigBlast {
 					continue;
 				}
 				int material = CyberDig.classify(n.getX(), n.getY(), n.getZ());
-				if (material > CyberDig.AIR) {
+				// (A room's air next to a blown wall stays air: DigWalls draws the wall behind it.)
+				if (material > CyberDig.AIR && (CyberCollision.hasTriangles() || CyberDig.openBelow(n.getX(), n.getY(), n.getZ()))) {
 					CyberDig.digCell(this.level, this.world, n, material);
 				}
 			}

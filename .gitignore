@@ -3,6 +3,7 @@ fabric/.gradle/
 fabric/build/
 fabric/run/
 fabric/out/
+fabric/logs/
 # cmake
 red4ext/build/
 # ide

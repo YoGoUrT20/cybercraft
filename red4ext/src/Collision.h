@@ -51,6 +51,9 @@ namespace cybercraft
 
 		// Drops everything and tells Minecraft to clear its store. Call on world/link change.
 		void Reset(std::uint32_t a_epoch);
+		// The grid moved under Night City (Grid::MovedSince): Minecraft moves the holes dug into the
+		// city with it. Goes out ahead of the next kColClear. Main thread.
+		void SendGridMoved(const proto::ColGridMoved& a_move);
 		// Once per frame, with the player in Minecraft coordinates. Cheap when disabled.
 		void Update(const McVec& a_playerMc);
 		// Once per frame after Update: the cars around the player. a_active false (V in a car, or
@@ -75,6 +78,9 @@ namespace cybercraft
 
 		// Height (Minecraft y) of the first static surface from a_from towards a_to, if any.
 		std::optional<double> FirstHitY(const McVec& a_from, const McVec& a_to);
+
+		// Where the first static surface from a_from towards a_to is, if any.
+		std::optional<McVec> FirstHit(const McVec& a_from, const McVec& a_to);
 
 		// How far from a_from the first static surface towards a_to is (blocks), if any.
 		std::optional<double> HitDistance(const McVec& a_from, const McVec& a_to);
@@ -167,6 +173,7 @@ namespace cybercraft
 
 		std::uint32_t                                  epoch_{ 0 };
 		bool                                           cleared_{ false };
+		std::vector<proto::ColGridMoved>               gridMoves_;  // waiting for room in the ring
 		std::vector<Column>                            pending_;  // nearest pillar last (pop_back)
 		Regions                                         regions_;  // pillars being scanned
 		std::unordered_map<std::uint64_t, std::size_t>  sentHash_;

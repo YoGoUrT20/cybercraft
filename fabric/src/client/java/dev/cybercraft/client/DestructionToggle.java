@@ -22,10 +22,7 @@ import net.minecraft.network.chat.Component;
 /**
  * The pause menu's "City destruction" button (its top left corner, clear of the menu at any GUI
  * scale) and its setting, {@code destruction=} in config/cybercraft.properties (see CyberDig.destruction).
- *
- * <p>Only shown once there are collision triangles to dig into. The plugin sends voxels alone, so in
- * Night City the button stays hidden and digging stays off: Cyberpunk's geometry can't be cut open
- * on screen, and a crater only left Minecraft's walls hanging in the air.
+ * On until it's turned off. Only shown in the city (once there's collision from the plugin).
  */
 public final class DestructionToggle {
 	private static final String KEY = "destruction";
@@ -40,7 +37,7 @@ public final class DestructionToggle {
 	public static void register() {
 		load();
 		ScreenEvents.AFTER_INIT.register((minecraft, screen, width, height) -> {
-			if (screen instanceof PauseScreen pause && pause.showsPauseMenu() && minecraft.player != null && CyberCollision.hasTriangles()) {
+			if (screen instanceof PauseScreen pause && pause.showsPauseMenu() && minecraft.player != null && CyberCollision.active()) {
 				Screens.getWidgets(screen).add(button(minecraft));
 			}
 		});
@@ -55,7 +52,7 @@ public final class DestructionToggle {
 			save();
 			CyberCraft.LOG.info("CyberCraft: city destruction {}", CyberDig.destruction ? "on" : "off");
 		}).bounds(4, 4, 150, 20).tooltip(Tooltip.create(Component.literal(host
-			? "Mining the city's ground and rock, and explosions, dig into it. Holes already dug stay either way."
+			? "Mining the city's streets and walls digs into them. Holes already dug stay either way."
 			: "In a friend's world, their setting decides."))).build();
 		button.active = host;
 		return button;
@@ -75,7 +72,7 @@ public final class DestructionToggle {
 			CyberCraft.LOG.warn("CyberCraft: couldn't read {}", file(), e);
 			return;
 		}
-		CyberDig.destruction = "true".equalsIgnoreCase(props.getProperty(KEY, "false").trim());
+		CyberDig.destruction = !"false".equalsIgnoreCase(props.getProperty(KEY, "true").trim());
 	}
 
 	/** Rewrites only its own line, keeping the file's comments and other settings (join=). */
@@ -92,7 +89,7 @@ public final class DestructionToggle {
 				}
 			}
 			if (!found) {
-				lines.add("# Mining and explosions dig into the city (the pause menu's \"City destruction\" button).");
+				lines.add("# Mining digs into the city (the pause menu's \"City destruction\" button).");
 				lines.add(line);
 			}
 			Files.createDirectories(file.getParent());

@@ -16,7 +16,7 @@
 namespace cybercraft::proto
 {
 	inline constexpr std::uint32_t kMagic = 0x52425943;  // "CYBR" in memory
-	inline constexpr std::uint32_t kVersion = 16;
+	inline constexpr std::uint32_t kVersion = 17;
 	inline constexpr wchar_t       kMappingName[] = L"Local\\CyberCraft_v1";
 	// Held by a running Minecraft with the mod (CyberLink.announceRunning: mapping name + "_minecraft").
 	inline constexpr wchar_t       kMinecraftMutexName[] = L"Local\\CyberCraft_v1_minecraft";
@@ -352,7 +352,8 @@ namespace cybercraft::proto
 		std::uint32_t count;
 		std::uint32_t hasSelection;           // draw an outline around the targeted block
 		float         selMin[3], selMax[3];   // MC coords
-		std::uint8_t  pad[0x40 - 36];
+		float         selUv[4];               // an opaque atlas rect, tinted black for the outline's edges
+		std::uint8_t  pad[0x40 - 52];
 		WorldEntity   entities[kMaxWorldEntities];
 	};
 	static_assert(sizeof(WorldEntities) == 0x40 + sizeof(WorldEntity) * kMaxWorldEntities);
@@ -385,8 +386,8 @@ namespace cybercraft::proto
 		kRenSolids = 10,      // RenSolids + 512-byte bitset (bit x + 16z + 256y): which blocks of a
 		                      // section NPCs collide with (sent after its kRenSection; 0 = none)
 		kRenDug = 11,         // RenDug + 512-byte bitset (bit x + 16z + 256y): which blocks of a section
-		                      // were dug out of the host's geometry; 0 = none. The plugin drains these
-		                      // unused: the city can't be dug into.
+		                      // were dug out of the host's geometry; 0 = none. The plugin cuts the city
+		                      // out of its picture there (World.cpp), so the hole's walls show.
 		kRenRagdoll = 9,      // RenAvatar + RenBatch[] + RenVertex[]: the player's body standing still,
 		                      // relative to the feet and facing +Z, split into its parts (RenBatch
 		                      // flags bits 8-11: RagdollPart). Sent about once a second while alive,
@@ -394,6 +395,10 @@ namespace cybercraft::proto
 		kRenHand = 12,        // RenHand + RenBatch[batchCount] + RenVertex[vertexCount]: the first-person
 		                      // hands and held items this frame, in Minecraft's view space (x right, y up,
 		                      // looking down -z); 0 batches = none (third person, hidden HUD, no kCyberDrawsHand)
+		kRenMount = 13,       // RenAvatar + RenBatch[batchCount] + RenVertex[vertexCount]: what the player
+		                      // rides (a boat, a minecart, a horse, ...) and whoever else rides it, relative
+		                      // to the player's feet like kRenAvatar (and left out of kRenScene); 0 batches
+		                      // = riding nothing
 	};
 
 	struct RenSolids
@@ -502,7 +507,8 @@ namespace cybercraft::proto
 
 	// The player as Minecraft's own entity renderer draws it (skin, armour, held items, cape),
 	// posed and animated, with positions in blocks relative to the player's feet: the plugin puts
-	// it at V's interpolated feet position, the one Cyberpunk's camera follows.
+	// it at V's interpolated feet position, the one Cyberpunk's camera follows. kRenMount (what the
+	// player rides) the same way.
 	struct RenAvatar
 	{
 		std::uint32_t batchCount;
@@ -547,7 +553,9 @@ namespace cybercraft::proto
 		std::uint32_t flags;    // bit0: cutout (alpha test), bit1: translucent, bit2: gives light (glows),
 		                        // bit3: full texture detail (no mips),
 		                        // bits 4-6: face normal as MC Direction ordinal + 1 (0 = none: lit without a normal;
-		                        // 7 = the normal in bits 8-31 as signed bytes x, y, z, for models and items)
+		                        // 7 = the normal in bits 8-31 as signed bytes x, y, z, for models and items),
+		                        // bit8 (with a normal 1-6): a dug hole's backdrop, drawn behind everything and only
+		                        // where the game's picture is cut, from that picture round the hole
 	};
 	static_assert(sizeof(RenVertex) == 32);
 
@@ -580,7 +588,24 @@ namespace cybercraft::proto
 		                   // voxels like kColRegion's but a layer of their own, refreshed every few
 		                   // frames: each one replaces the whole previous layer (count 0: no vehicles).
 		                   // The box is where they were looked for.
+		kColGridMoved = 5,  // payload: ColGridMoved. The grid moved under Night City (Insert, the arrows,
+		                    // the scale): where the holes dug into the city go now, so they stay put
+		                    // in it. Sent before the epoch's kColClear.
 	};
+
+	// Where a point in Minecraft coordinates before a grid change is after it: x' = m00 x + m02 z + tx,
+	// y' = m11 y + ty, z' = m20 x + m22 z + tz (a turn about Y and a scale). With kGridMovedShift the
+	// holes move by whole blocks (tx, ty, tz) and nothing else changes.
+	struct ColGridMoved
+	{
+		double        m00, m02, m20, m22, m11;
+		double        tx, ty, tz;
+		std::uint32_t flags;  // kGridMovedShift
+		std::uint32_t pad;
+	};
+	static_assert(sizeof(ColGridMoved) == 72);
+
+	inline constexpr std::uint32_t kGridMovedShift = 1u << 0;
 
 	// Exact host collision triangle (MC space) for the player's smooth collider.
 	enum ColTriFlags : std::uint32_t

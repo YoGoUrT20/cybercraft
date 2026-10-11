@@ -225,6 +225,10 @@ namespace cybercraft
 				return { t.prevX + (t.curX - t.prevX) * u, t.prevY + (t.curY - t.prevY) * u, t.prevZ + (t.curZ - t.prevZ) * u };
 			}
 
+			// The FPP camera's world matrix as ReadCamera last read it (TakeLeanOut).
+			RED4ext::Matrix lastCameraWorld{};
+			bool            lastCameraValid = false;
+
 			// Cyberpunk's FPP camera, read from its world matrix, whose rows are its axes in world
 			// space (X right, Y forward, Z up) and W its position. Publishes the view the blocks are
 			// drawn from, and returns the pitch as Minecraft's (positive looking down).
@@ -243,6 +247,7 @@ namespace cybercraft
 				// GetFOV() is already the vertical FOV: it read ~51 with the 80 (horizontal, 16:9)
 				// setting, and converting it again drew the blocks zoomed ~1.8x and off their spot.
 				static const bool fovVertical = Config::GetBool(L"World", L"bFovIsVertical", true);
+				lastCameraValid = false;
 				if (!getCamera || !a_player) {
 					SetCameraView({});
 					return std::nullopt;
@@ -276,6 +281,8 @@ namespace cybercraft
 					view.valid = true;
 				}
 				SetCameraView(view);
+				lastCameraWorld = world;
+				lastCameraValid = view.valid;
 
 				// From how far the camera's up leans along V's heading (forward looking down), not
 				// from its forward: Minecraft's front view (ThirdPerson) turns the camera round, and
@@ -284,6 +291,40 @@ namespace cybercraft
 				const double yaw = a_mcYaw * 0.0174532925;
 				const double lean = -up.x * std::sin(yaw) + up.z * std::cos(yaw);
 				return float(std::atan2(lean, up.y) * 57.2957795);
+			}
+
+			// Cyberpunk's first-person camera rides V's head, which leans out over her feet as she looks
+			// down: a third of a block ahead of Minecraft's eye looking straight down (from the logs),
+			// further than Minecraft's player stands from a block, so the camera went into a block she
+			// stood against, and Minecraft's aim (from its eye) wasn't where the crosshair showed. Each
+			// frame, where the camera is against Minecraft's eye goes back into the camera's local
+			// position, half of it at a time: kept along V's heading, her side and straight up (it
+			// depends on how far she looks down, not which way the camera points), and turned into
+			// the camera's own axes to apply. All three ways: kept along the camera's tilted axes and
+			// corrected sideways only, a look down and up again left it 0.4 m under Minecraft's eye.
+			RED4ext::Vector4 TakeLeanOut(const McVec& a_eyeMc, float a_mcYaw, bool a_firstPerson)
+			{
+				static double forward = 0.0, side = 0.0, up = 0.0;  // metres
+				if (!a_firstPerson || !lastCameraValid) {
+					forward = side = up = 0.0;
+					return {};
+				}
+				const double yaw = McYawToCp(a_mcYaw) * 0.017453292519943295;
+				const double fx = -std::sin(yaw), fy = std::cos(yaw);  // V's heading, Cyberpunk x and y
+				const double rx = fy, ry = -fx;                        // her right
+				const auto   target = McToCp(a_eyeMc.x, a_eyeMc.y, a_eyeMc.z);
+				const double ex = double(target.x) - lastCameraWorld.W.X, ey = double(target.y) - lastCameraWorld.W.Y,
+							 ez = double(target.z) - lastCameraWorld.W.Z;
+				constexpr double kGain = 0.5, kMost = 0.6;
+				forward = std::clamp(forward + kGain * (ex * fx + ey * fy), -kMost, kMost);
+				side = std::clamp(side + kGain * (ex * rx + ey * ry), -kMost, kMost);
+				up = std::clamp(up + kGain * ez, -kMost, kMost);
+				// Into the camera's own axes (its local frame's, with the orientation it is left at).
+				const double wx = forward * fx + side * rx, wy = forward * fy + side * ry, wz = up;
+				const auto&  x = lastCameraWorld.X;
+				const auto&  y = lastCameraWorld.Y;
+				const auto&  z = lastCameraWorld.Z;
+				return { float(wx * x.X + wy * x.Y + wz * x.Z), float(wx * y.X + wy * y.Y + wz * y.Z), float(wx * z.X + wy * z.Y + wz * z.Z), 0.0f };
 			}
 
 			// In a car the picture is the car's camera (behind it, or the dashboard's), not V's FPP
@@ -357,12 +398,93 @@ namespace cybercraft
 				return RED4ext::ExecuteFunction(a_player.GetPtr(), fn, &vehicle, args) && vehicle;
 			}
 
-			void StopPuppet(Runtime& a_st)
+			// V let go standing in a hole Minecraft dug into the city (World::DugAt): Cyberpunk's own
+			// ground is still whole over it, and under it she'd fall out of the world. She goes back up
+			// onto it, over where she stands.
+			void LiftFromHole(const rtti::Handle<rtti::IScriptable>& a_player)
 			{
+				RED4ext::Vector4 pos{};
+				float            yaw = 0.0f;
+				if (!a_player || !getWorldPosition.Call(a_player.GetPtr(), &pos)) {
+					return;
+				}
+				getWorldYaw.Call(a_player.GetPtr(), &yaw);
+				const auto feet = CpToMc(pos.X, pos.Y, pos.Z);
+				double     top = std::floor(feet.y + 0.05);
+				if (!World::DugAt(feet.x, top, feet.z)) {
+					return;
+				}
+				for (int up = 0; up < 40 && World::DugAt(feet.x, top + 1.0, feet.z); ++up) {
+					top += 1.0;
+				}
+				const auto ground = Collision::Get().FirstHitY(McVec{ feet.x, top + 2.0, feet.z }, McVec{ feet.x, feet.y, feet.z });
+				if (!ground) {
+					logger::warn("puppet: V let go in a hole dug into the city, with no ground found over it");
+					return;
+				}
+				Puppet::Place(McVec{ feet.x, *ground + 0.02, feet.z }, yaw);
+				logger::info("puppet: V let go in a hole dug into the city; put back on the ground over it ({:.2f} blocks up)", *ground - feet.y);
+			}
+
+			// V's own collision is off while her body is in Night City that Minecraft dug out
+			// (CyberCraftSetCollisionOff): the city's colliders are still there (a dug-out chair, the
+			// street over a hole), and Cyberpunk pushed her up and out of them every frame while
+			// Minecraft put her back, so she shook back and forth. She's placed every frame anyway.
+			// Set again every second like the weapons: a load starts her with it on.
+			bool  collisionOffWanted = false;
+			bool  collisionOff = false;
+			float collisionRecheck = 0.0f;
+			float collisionOffLinger = 0.0f;
+
+			void SyncCollisionOff(bool a_off, float a_delta)
+			{
+				collisionRecheck -= a_delta;
+				if (a_off == collisionOffWanted && collisionRecheck > 0.0f) {
+					return;
+				}
+				collisionOffWanted = a_off;
+				collisionRecheck = 1.0f;
+				const auto set = Scripts::SetCollisionOff(a_off);
+				if (!set || !*set) {
+					return;
+				}
+				if (a_off != collisionOff) {
+					logger::info("puppet: V's collision {}", a_off ? "off: she stands in Night City Minecraft dug out" : "back on");
+				}
+				collisionOff = a_off;
+			}
+
+			// Whether V's body, standing at a_feet, reaches into a cell Minecraft dug out of the city:
+			// Minecraft's player's box, widened to her (a capsule wider than it) and as tall as she is.
+			bool InDugCity(const McVec& a_feet)
+			{
+				const double blocks = 1.0 / MetresPerBlock();
+				const double radius = 0.45 * blocks, height = 1.9 * blocks;
+				for (auto x = std::floor(a_feet.x - radius); x <= std::floor(a_feet.x + radius); x += 1.0) {
+					for (auto y = std::floor(a_feet.y + 0.05); y <= std::floor(a_feet.y + height); y += 1.0) {
+						for (auto z = std::floor(a_feet.z - radius); z <= std::floor(a_feet.z + radius); z += 1.0) {
+							if (World::DugAt(x + 0.5, y + 0.5, z + 0.5)) {
+								return true;
+							}
+						}
+					}
+				}
+				return false;
+			}
+
+			// a_lift: Cyberpunk has V for good (CyberCraft turned off), so she's taken out of any hole.
+			void StopPuppet(Runtime& a_st, bool a_lift = false)
+			{
+				// Her collision back before anything else: whatever has her now, she stands on the city again.
+				collisionOffLinger = 0.0f;
+				SyncCollisionOff(false, 0.0f);
 				if (a_st.puppeting) {
 					logger::info("puppet off");
 					Input::ReleaseAll();
 					Puppet::Release();
+					if (a_lift) {
+						LiftFromHole(rtti::Player());
+					}
 				}
 				a_st.puppeting = false;
 				a_st.drawBlocks = false;
@@ -497,7 +619,10 @@ namespace cybercraft
 			// "Minecraft scale" changed (Mod Settings, CyberCraft.ini): V is somewhere else in
 			// Minecraft's coordinates, as after Insert. The city is sent afresh, the blocks' lights
 			// and colliders go where the blocks now are, and Minecraft's player is put back where V is.
+			// The holes dug into the city stay where they were dug.
+			const auto scaleBefore = Grid::Current();
 			if (Grid::UpdateScale()) {
+				Collision::Get().SendGridMoved(Grid::MovedSince(scaleBefore));
 				++epoch;
 				teleportPending = true;
 				Collision::Get().Reset(epoch);
@@ -553,7 +678,7 @@ namespace cybercraft
 			}
 			if (!enabled) {
 				SetCameraView({});
-				StopPuppet(st);
+				StopPuppet(st, true);
 				// Minecraft's player follows V again from wherever she is once it's back on.
 				teleportPending = true;
 				WriteIdleState(link, proto::kCyberDisabled);
@@ -579,7 +704,9 @@ namespace cybercraft
 			// Insert: shift Minecraft's grid so the ground under V is on a block boundary, and turn it
 			// about her so its rows run the way she faces. Everything in Minecraft coordinates moves
 			// with it: the collision is resent, and Minecraft's player is put back where V stands.
+			// Not the holes dug into the city: they belong to it, and go back to where they were dug.
 			if (Input::TakeAlignRequest()) {
+				const auto gridBefore = Grid::Current();
 				const auto ground = Collision::Get().FirstHitY(McVec{ here.x, here.y + 1.0, here.z }, McVec{ here.x, here.y - 3.0, here.z });
 				if (ground) {
 					Grid::AlignTo(McToCp(here.x, *ground, here.z).z);
@@ -587,6 +714,7 @@ namespace cybercraft
 					logger::info("grid: no ground under V to align to");
 				}
 				Grid::TurnTo(pos.X, pos.Y, yaw);
+				Collision::Get().SendGridMoved(Grid::MovedSince(gridBefore));
 				here = CpToMc(pos.X, pos.Y, pos.Z);
 				++epoch;
 				Collision::Get().Reset(epoch);
@@ -607,6 +735,7 @@ namespace cybercraft
 				const double fx = -std::sin(heading), fy = std::cos(heading);
 				const double lx = -fy, ly = fx;
 				const auto before = here;
+				const auto gridBefore = Grid::Current();
 				Grid::Nudge(step * (forward * fx + left * lx), step * (forward * fy + left * ly));
 				here = CpToMc(pos.X, pos.Y, pos.Z);
 				// Minecraft's player moved the other way under the grid: by as much as V's own
@@ -614,6 +743,15 @@ namespace cybercraft
 				const bool  behind = softPending || (teleportSeq != hardTeleportSeq && mc.teleportAck != teleportSeq);
 				const McVec from = behind ? softTarget : McVec{ mc.x, mc.y, mc.z };
 				softTarget = { from.x + here.x - before.x, from.y, from.z + here.z - before.z };
+				// The holes dug into the city stay where they were dug, catching up with the nudges a
+				// whole block at a time; Minecraft's player standing in one goes with it.
+				if (const auto follow = Grid::HolesFollowNudge(gridBefore)) {
+					Collision::Get().SendGridMoved(*follow);
+					if (World::DugAt(from.x, from.y + 0.1, from.z)) {
+						softTarget.x += follow->tx;
+						softTarget.z += follow->tz;
+					}
+				}
 				softPending = true;
 				nudgeSettle = 0.5f;
 			}
@@ -695,6 +833,10 @@ namespace cybercraft
 					Input::ReleaseAll();
 					Puppet::Release();
 					ThirdPerson::Release(player);
+					// Minecraft gone (closed, crashed): its blocks' colliders went with it.
+					if (!haveMc) {
+						LiftFromHole(player);
+					}
 				}
 			}
 			st.puppeting = puppet;
@@ -782,6 +924,9 @@ namespace cybercraft
 						Collision::Get().DescribeAhead(McVec{ mc.x, mc.y, mc.z }, dx, dz));
 				}
 			}
+			// In what Minecraft dug out of the city, and a moment after (she's wider than its player).
+			collisionOffLinger = puppet && InDugCity(feet) ? 0.5f : std::max(0.0f, collisionOffLinger - delta);
+			SyncCollisionOff(puppet && collisionOffLinger > 0.0f, delta);
 			if (puppet && softHold <= 0.0f) {
 				Puppet::Apply(feet, st.yaw, CpVec{ pos.X, pos.Y, pos.Z }, yaw, (mc.flags & proto::kMcOnGround) != 0);
 				st.lastPuppeted = now;
@@ -791,7 +936,8 @@ namespace cybercraft
 			// Minecraft's eye (1.62 blocks standing, so lower than V's own below a metre a block).
 			if (puppet) {
 				const float eyeShift = mc.eyeHeight > 0.0f ? float(mc.eyeHeight * MetresPerBlock() - kCyberpunkEyeHeight) : 0.0f;
-				ThirdPerson::Update(player, mc.cameraMode, mc.cameraDistance, st.yaw, st.pitch, McVec{ feet.x, feet.y + mc.eyeHeight, feet.z }, eyeShift);
+				const McVec eyeMc{ feet.x, feet.y + mc.eyeHeight, feet.z };
+				ThirdPerson::Update(player, mc.cameraMode, mc.cameraDistance, st.yaw, st.pitch, eyeMc, eyeShift, TakeLeanOut(eyeMc, st.yaw, mc.cameraMode == 0));
 			} else {
 				ThirdPerson::Release(player);
 			}

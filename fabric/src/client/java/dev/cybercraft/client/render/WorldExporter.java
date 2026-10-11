@@ -61,7 +61,7 @@ import org.jspecify.annotations.Nullable;
  * Ships what Minecraft would draw in the world to the plugin, which draws it in Cyberpunk's frame
  * (so it is locked to the world and hidden behind the city): block and fluid meshes built by
  * Minecraft's own block renderer (models, tint, smooth lighting), the texture atlas, arrows,
- * dropped items and cracks (and the targeted-block outline, which it doesn't draw yet). With each
+ * dropped items, cracks and the targeted block's outline. With each
  * section's mesh go its light blocks and solid blocks, which the plugin turns into Cyberpunk lights
  * and colliders. Render thread only.
  */
@@ -272,12 +272,12 @@ public final class WorldExporter {
 			}
 		}
 		MESH.glows = false;
-		// Holes dug into the ground (CyberDig): Minecraft walls where its surface still runs above
-		// them. None in Night City, where digging is off and the plugin sends no triangles to dig.
+		// Holes dug into the city (CyberDig): Minecraft walls where its surface still runs above
+		// them, or where the ground behind them isn't revealed as blocks yet.
 		var digLookup = dev.cybercraft.world.CyberDig.clientDug;
 		if (dugCount > 0 && digLookup != null) {
 			Minecraft minecraft = Minecraft.getInstance();
-			DigWalls.add(level, sx, sy, sz, dug, digLookup, st -> cubeFaces(minecraft, st), MESH::wall);
+			DigWalls.add(level, sx, sy, sz, dug, digLookup, st -> cubeFaces(minecraft, st), MESH);
 		}
 		if (MESH.vertexCount() == 0 && !SENT.contains(key) && lightCount == 0 && !LIT.contains(key) && solidCount == 0 && !SOLID.contains(key) && dugCount == 0
 			&& !DUG.contains(key)) {
@@ -316,8 +316,8 @@ public final class WorldExporter {
 					SOLID.remove(key);
 				}
 			}
-			// The section's dug cells. The plugin drains them without using them: Cyberpunk's
-			// geometry can't be cut open on screen.
+			// The section's dug cells: the plugin cuts Night City out of its picture there, so the hole's
+			// walls and the blocks in it show.
 			if (dugCount > 0 || DUG.contains(key)) {
 				ByteBuffer dugHeader = ByteBuffer.allocate(24).order(ByteOrder.LITTLE_ENDIAN).putInt(sx).putInt(sy).putInt(sz).putInt(dugCount)
 					.putInt(dev.cybercraft.client.CyberDigClient.world()).putInt(0).flip();
@@ -484,6 +484,17 @@ public final class WorldExporter {
 				new float[] { (float) box.getXsize(), (float) box.getYsize(), (float) box.getZsize() }, atlas.crackUv(stage), 0
 			));
 		}
+		// Mining into the city (CyberDigClient): its cell cracks up to the surface, like a block's.
+		BlockPos city = dev.cybercraft.client.CyberDigClient.cracking();
+		if (city != null && ENTITIES.size() < Proto.MAX_WORLD_ENTITIES) {
+			float top = dev.cybercraft.client.CyberDigClient.height(city);
+			AABB box = new AABB(city.getX(), city.getY(), city.getZ(), city.getX() + 1, city.getY() + top, city.getZ() + 1).inflate(0.004);
+			ENTITIES.add(new CyberLink.WorldEntity(
+				Proto.WE_CRACK, city.hashCode(), (float) box.minX, (float) box.minY, (float) box.minZ, 0.0F, 0.0F, 1.0F,
+				new float[] { (float) box.getXsize(), (float) box.getYsize(), (float) box.getZsize() },
+				atlas.crackUv(dev.cybercraft.client.CyberDigClient.crackStage()), 0
+			));
+		}
 	}
 
 	/** The item's icon in the combined atlas {u0, v0, u1, v1}, or null. */
@@ -503,8 +514,10 @@ public final class WorldExporter {
 	}
 
 	/**
-	 * The block outline (the plugin doesn't draw it yet): the targeted block, or where a held block
-	 * would go against the city.
+	 * The block outline: the targeted block, or the cell of the city under the crosshair (the one
+	 * mining digs out, up to its surface), as Minecraft outlines the block looked at rather than where
+	 * a placed one goes. Then an opaque spot of the atlas (stone's middle) for the plugin to draw its
+	 * edges with.
 	 */
 	private static float[] selection(Minecraft minecraft, ClientLevel level) {
 		HitResult hit = minecraft.hitResult;
@@ -512,25 +525,36 @@ public final class WorldExporter {
 			return null;
 		}
 		BlockPos pos = blockHit.getBlockPos();
-		if (blockHit instanceof CyberClip.CyberHitResult) {
-			if (!(minecraft.player.getMainHandItem().getItem() instanceof BlockItem)) {
-				return null;
-			}
-			return new float[] { pos.getX(), pos.getY(), pos.getZ(), pos.getX() + 1, pos.getY() + 1, pos.getZ() + 1 };
+		if (blockHit instanceof CyberClip.CyberHitResult city) {
+			int[] cell = dev.cybercraft.world.CyberRay.surfaceCell(city.hit);
+			BlockPos at = new BlockPos(cell[0], cell[1], cell[2]);
+			float top = dev.cybercraft.client.CyberDigClient.height(at);
+			return outline(minecraft, at.getX(), at.getY(), at.getZ(), at.getX() + 1, at.getY() + top, at.getZ() + 1);
 		}
 		VoxelShape shape = level.getBlockState(pos).getShape(level, pos);
 		if (shape.isEmpty()) {
 			return null;
 		}
 		AABB box = shape.bounds().move(pos);
-		return new float[] { (float) box.minX, (float) box.minY, (float) box.minZ, (float) box.maxX, (float) box.maxY, (float) box.maxZ };
+		return outline(minecraft, box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ);
+	}
+
+	private static float @Nullable [] outline(Minecraft minecraft, double x0, double y0, double z0, double x1, double y1, double z1) {
+		float[] stone = cubeFaces(minecraft, net.minecraft.world.level.block.Blocks.STONE.defaultBlockState());
+		if (stone == null) {
+			return null;
+		}
+		// The middle of stone's side: opaque all over, whatever mip the plugin samples.
+		float u = (stone[0] + stone[2]) * 0.5F, v = (stone[1] + stone[3]) * 0.5F;
+		float du = Math.abs(stone[2] - stone[0]) * 0.05F, dv = Math.abs(stone[3] - stone[1]) * 0.05F;
+		return new float[] { (float) x0, (float) y0, (float) z0, (float) x1, (float) y1, (float) z1, u - du, v - dv, u + du, v + dv };
 	}
 
 	/**
 	 * Collects Minecraft's block quads (and fluid vertices) as triangles in the RenVertex layout:
 	 * section-relative position, combined-atlas UV, RGBA colour (tint and shading), block/sky light.
 	 */
-	private static final class MeshBuilder implements net.minecraft.client.renderer.block.BlockQuadOutput, FluidRenderer.Output, VertexConsumer {
+	private static final class MeshBuilder implements net.minecraft.client.renderer.block.BlockQuadOutput, FluidRenderer.Output, VertexConsumer, DigWalls.Out {
 		private ByteBuffer buf = ByteBuffer.allocateDirect(1 << 20).order(ByteOrder.LITTLE_ENDIAN);
 		private int vertices;
 		// fluid quad assembly
@@ -599,11 +623,22 @@ public final class WorldExporter {
 		}
 
 		/** A dug hole's wall (DigWalls): an untinted opaque quad. */
-		void wall(float[] xyz, float[] uv, int light, Direction normal) {
+		@Override
+		public void quad(float[] xyz, float[] uv, int light, Direction normal) {
 			this.ensure(6 * Proto.REN_VERTEX_BYTES);
 			int flags = flags(false, normal);
 			for (int k : new int[] { 0, 1, 2, 0, 2, 3 }) {
 				this.vertex(xyz[k * 3], xyz[k * 3 + 1], xyz[k * 3 + 2], uv[k * 2], uv[k * 2 + 1], 0xFFFFFFFF, light, flags);
+			}
+		}
+
+		/** A dug cell's backdrop (DigWalls): flag bit 8, no texture: the plugin paints it from its own picture. */
+		@Override
+		public void backdrop(float[] xyz, Direction normal) {
+			this.ensure(6 * Proto.REN_VERTEX_BYTES);
+			int flags = flags(false, normal) | 0x100;
+			for (int k : new int[] { 0, 1, 2, 0, 2, 3 }) {
+				this.vertex(xyz[k * 3], xyz[k * 3 + 1], xyz[k * 3 + 2], 0.0F, 0.0F, 0xFFFFFFFF, 0, flags);
 			}
 		}
 

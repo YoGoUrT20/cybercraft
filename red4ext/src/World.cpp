@@ -31,6 +31,7 @@ cbuffer Params : register(b0) {
 	                     // Minecraft's block light kept
 	float4 water;        // Night City's water: surface (Minecraft y), on, fade per metre under it,
 	                     // what crossing its surface takes
+	float4 dug;          // xyz: the lowest cell of the dug window (dugCells), w: 1 with a dug cell in it
 };
 Texture2D atlas : register(t0);
 SamplerState samp : register(s0);
@@ -39,6 +40,12 @@ SamplerState smooth : register(s1);
 ByteAddressBuffer visibility : register(t1);
 Texture2D<float> sceneDepth : register(t2);
 Texture2D sceneColor : register(t3);
+// The cells dug out of Night City round the camera (kRenDug), a bit each: 128 x 64 x 128 from dug.xyz,
+// x fastest (4 words a row), then y, then z.
+ByteAddressBuffer dugCells : register(t4);
+// Cyberpunk's finished picture at full size (without its HUD when the game hands that over), for
+// painting the backdrop of what was dug away (Backdrop).
+Texture2D scenePicture : register(t5);
 struct VSIn {
 	float3 pos : POSITION;
 	float2 uv : TEXCOORD0;
@@ -80,6 +87,9 @@ VSOut VSMain(VSIn i, uint vertexId : SV_VertexID) {
 	VSOut o;
 	o.world = i.pos + origin;
 	o.pos = mul(viewProj, float4(o.world, 1));
+	if ((i.flags & 0x100) != 0 && ((i.flags >> 4) & 7) != 7) {
+		o.pos.z = o.pos.w * 0.999999;  // a backdrop is behind everything Minecraft draws (PSMain)
+	}
 	uint face = vertexId / 6;
 	uint word = visibility.Load((face / 4) * 4);
 	if (((word >> ((face % 4) * 8)) & 0xFF) == 0) {
@@ -150,10 +160,96 @@ float4 PSDown(float4 pos : SV_Position) : SV_Target {
 	}
 	return float4(sum / 64.0, 1);
 }
+bool Dug(float3 p) {
+	// Clamped into the window before the read, whatever the test says: the compiler reads first and
+	// picks after, and dugCells is a root view with no bounds of its own. A read far past it (the
+	// sky's depth puts p a long way off) took the GPU down.
+	int3 c = int3(clamp(floor(p) - dug.xyz, -1.0, 256.0));
+	bool inside = all(c >= 0) && c.x < 128 && c.y < 64 && c.z < 128;
+	int3 k = clamp(c, int3(0, 0, 0), int3(127, 63, 127));
+	uint word = dugCells.Load(((k.z * 64 + k.y) * 4 + (k.x >> 5)) * 4);
+	return inside && ((word >> (k.x & 31)) & 1) != 0;
+}
+// Whether what the game drew at this pixel was dug out of the city: it's gone there, and the hole's
+// walls and floor behind it show. It lies on this pixel's sight line at the game's depth. The game's
+// visible surface sits a little off the collision the dug cells were cut from, so it also counts a
+// little above a dug cell, and a little further along the sight line (a hole seen from the side).
+bool CutPoint(float3 p, float3 along) {
+	return Dug(p) || Dug(p - float3(0, 0.2, 0)) || Dug(p + along * 0.25);
+}
+bool Cut(float3 world, float viewZ, float sceneZ) {
+	bool cut = false;
+	[branch] if (dug.w > 0.5) {
+		float3 ray = world - eye.xyz;
+		cut = CutPoint(eye.xyz + ray * (sceneZ / max(viewZ, 1e-4)), normalize(ray));
+	}
+	return cut;
+}
+// The sight line through a screen pixel (unit, Minecraft coordinates): where the two planes through
+// the eye that the projection maps to that pixel's x and y meet.
+float3 SightLine(float2 pixel) {
+	float2 ndc = float2(pixel.x * light.z * 2.0 - 1.0, 1.0 - pixel.y * light.w * 2.0);
+	float3 d = normalize(cross(viewProj[0].xyz - ndc.x * viewProj[3].xyz, viewProj[1].xyz - ndc.y * viewProj[3].xyz));
+	return dot(d, forward.xyz) < 0 ? -d : d;
+}
+// Cut, for any pixel of the screen.
+bool CutAt(float2 pixel) {
+	float3 along = SightLine(pixel);
+	return CutPoint(eye.xyz + along * (SceneViewZ(pixel) / max(dot(along, forward.xyz) * eye.w, 1e-4)), along);
+}
+// Something that stood free (a chair, a bin: CyberDig.freeStanding) was dug away, and what stood
+// behind it was never in the game's picture: its pixels are painted from the picture round the hole,
+// from the first pixel not cut along each of eight directions, the nearer the more, and what lies
+// behind the hole (deeper than behind, in metres) more than what stands beside it (the rest of the
+// chair).
+float3 Backdrop(float2 pixel, float behind) {
+	float2 size = 1.0 / light.zw;
+	float3 sum = 0;
+	float  weights = 0;
+	[loop] for (int k = 0; k < 8; ++k) {
+		float2 dir;
+		sincos(k * 0.78539816, dir.y, dir.x);
+		float inside = 0.0, outside = 2.0;
+		bool  found = false;
+		[loop] for (int s = 0; s < 24; ++s) {
+			float2 q = pixel + dir * outside;
+			if (any(q < 0) || any(q >= size)) break;
+			if (!CutAt(q)) {
+				found = true;
+				break;
+			}
+			inside = outside;
+			outside *= 1.35;
+		}
+		if (!found) continue;
+		// Back to the hole's edge: halfway, four times.
+		[loop] for (int b = 0; b < 4; ++b) {
+			float mid = (inside + outside) * 0.5;
+			if (CutAt(pixel + dir * mid)) inside = mid;
+			else outside = mid;
+		}
+		float2 q = clamp(pixel + dir * (outside + 1.5), 0, size - 1);
+		float  w = (SceneViewZ(q) > behind ? 1.0 : 0.2) / outside;
+		sum += scenePicture.Load(int3(q, 0)).rgb * w;
+		weights += w;
+	}
+	return weights > 0 ? sum / weights : SceneLight(pixel * light.zw);
+}
 float4 PSMain(VSOut i) : SV_Target {
+	// Bit 8 (with a face normal): a backdrop, a side of a dug cell where something stood free. Drawn
+	// only where the game's picture is cut, from the side the camera looks at from inside the cell.
+	if ((i.flags & 0x100) != 0 && ((i.flags >> 4) & 7) != 7) {
+		[branch] if (depthParams.w < 0.5 || sceneParams.x < 0.5 || dot(Normal(i.flags), eye.xyz - i.world) <= 0.0) discard;
+		float viewZ = dot(i.world - eye.xyz, forward.xyz) * eye.w;
+		if (!Cut(i.world, viewZ, SceneViewZ(i.pos.xy))) discard;
+		return float4(Backdrop(i.pos.xy, viewZ - 0.5 * eye.w), 1.0);
+	}
 	if (depthParams.w > 0.5) {
 		float viewZ = dot(i.world - eye.xyz, forward.xyz) * eye.w;  // metres, as the game's depth is
-		if (viewZ > SceneViewZ(i.pos.xy) * 1.003 + 0.03) discard;  // something of the game's is in front
+		float sceneZ = SceneViewZ(i.pos.xy);
+		[branch] if (viewZ > sceneZ * 1.003 + 0.03) {
+			if (!Cut(i.world, viewZ, sceneZ)) discard;  // something of the game's is in front
+		}
 	}
 	// Bit 3: full detail. Particles and entities cut small pieces out of atlas sprites (a crumb of
 	// a block, a shard of a potion bottle), which the atlas's smaller mips blur into their
@@ -265,8 +361,9 @@ float4 PSOver(float4 pos : SV_Position) : SV_Target {
 			float          sceneParams[4];  // enabled, gain, floor, probe distance
 			float          tone[4];         // colour kept, face shading kept, haze per metre, block light kept
 			float          water[4];        // surface (Minecraft y), on, fade per metre, surface's share
+			float          dug[4];          // the dug window's lowest cell, any dug cell in it
 		};
-		static_assert(sizeof(Params) == 208);
+		static_assert(sizeof(Params) == 224);
 
 		struct Section
 		{
@@ -324,6 +421,10 @@ float4 PSOver(float4 pos : SV_Position) : SV_Target {
 			// feet; drawn at V's feet while ThirdPerson has it shown.
 			std::vector<proto::RenBatch>   avatarBatches;
 			std::vector<proto::RenVertex>  avatarVertices;
+			// What the player rides (kRenMount), relative to its feet too; drawn at V's feet while
+			// Minecraft drives her, so the boat can't shake about under the camera.
+			std::vector<proto::RenBatch>   mountBatches;
+			std::vector<proto::RenVertex>  mountVertices;
 			// The first-person hands and held items (kRenHand), in Minecraft's view space, drawn over
 			// everything else with its hand projection.
 			std::vector<proto::RenBatch>   handBatches;
@@ -366,6 +467,7 @@ float4 PSOver(float4 pos : SV_Position) : SV_Target {
 			UINT                   sceneW{ 0 }, sceneH{ 0 };
 			DXGI_FORMAT            sceneFormat{ DXGI_FORMAT_UNKNOWN };
 			bool                   sceneLive{ false };  // copied this frame
+			bool                   sceneHudless{ false };  // the blocks read the HUD-less picture instead (t5, and the 80x45 one)
 			// ... and shrunk to 80x45 (PSDown) for the blocks to read their light from.
 			ComPtr<ID3D12Resource>       sceneSmall;
 			ComPtr<ID3D12DescriptorHeap> rtvHeap;  // kRtvSmall, kRtvBlocks
@@ -410,6 +512,70 @@ float4 PSOver(float4 pos : SV_Position) : SV_Target {
 		std::mutex                                facesMutex;
 		std::unordered_map<std::uint64_t, Faces> faces;
 		std::size_t                               faceCursor = 0;  // round robin over every face
+		// The cells dug out of Night City (kRenDug), by section (SectionKey): where the blocks' shader
+		// cuts the city out of the picture, and the face rays look through it. Written on the render
+		// thread, read on the game thread too (DugAt).
+		std::mutex                                                       dugMutex;
+		std::unordered_map<std::uint64_t, std::array<std::uint64_t, 64>> dugSections;
+		std::uint64_t                                                    dugVersion = 0;
+		// What the shader reads: the dug cells in a window round the camera (render thread only),
+		// a bit each, kDugWords per row of kDugW cells along x, rows by y then z.
+		constexpr int              kDugW = 128, kDugH = 64, kDugWords = kDugW / 32;
+		std::vector<std::uint32_t> dugWindow;
+		std::int32_t               dugOrigin[3]{};
+		std::uint64_t              dugWindowVersion = ~0ull;
+		bool                       dugAny = false;
+
+		// A section coordinate back out of SectionKey's 21 bits.
+		std::int32_t SectionCoord(std::uint64_t a_bits)
+		{
+			return std::int32_t(std::int64_t(a_bits << 43) >> 43);
+		}
+
+		// The window round a_eye (Minecraft coordinates), built afresh when the dug cells changed or
+		// the camera crossed into another section. True with a dug cell in it.
+		bool RefreshDugWindow(double a_eyeX, double a_eyeY, double a_eyeZ)
+		{
+			const std::int32_t origin[3]{ std::int32_t(std::floor(a_eyeX / 16.0)) * 16 - kDugW / 2, std::int32_t(std::floor(a_eyeY / 16.0)) * 16 - kDugH / 2,
+				std::int32_t(std::floor(a_eyeZ / 16.0)) * 16 - kDugW / 2 };
+			std::lock_guard lock(dugMutex);
+			if (dugVersion == dugWindowVersion && origin[0] == dugOrigin[0] && origin[1] == dugOrigin[1] && origin[2] == dugOrigin[2]) {
+				return dugAny;
+			}
+			dugWindowVersion = dugVersion;
+			std::memcpy(dugOrigin, origin, sizeof(origin));
+			dugWindow.assign(std::size_t(kDugWords) * kDugH * kDugW, 0u);
+			dugAny = false;
+			constexpr std::uint64_t mask = (1ull << 21) - 1;
+			for (const auto& [key, bits] : dugSections) {
+				const std::int32_t sx = SectionCoord((key >> 42) & mask), sy = SectionCoord((key >> 21) & mask), sz = SectionCoord(key & mask);
+				const std::int32_t wx = sx * 16 - origin[0];
+				if (wx < 0 || wx + 16 > kDugW) {
+					continue;
+				}
+				for (int y = 0; y < 16; ++y) {
+					const std::int32_t wy = sy * 16 + y - origin[1];
+					if (wy < 0 || wy >= kDugH) {
+						continue;
+					}
+					for (int z = 0; z < 16; ++z) {
+						const std::int32_t wz = sz * 16 + z - origin[2];
+						if (wz < 0 || wz >= kDugW) {
+							continue;
+						}
+						const int           bit = 16 * z + 256 * y;  // the row's x = 0
+						const std::uint32_t row = std::uint32_t(bits[bit >> 6] >> (bit & 63)) & 0xFFFFu;
+						if (row == 0) {
+							continue;
+						}
+						dugWindow[(std::size_t(wz) * kDugH + wy) * kDugWords + (wx >> 5)] |= row << (wx & 31);
+						dugAny = true;
+					}
+				}
+			}
+			return dugAny;
+		}
+
 		// Blocks are depth-tested against Cyberpunk's depth this frame: the face rays can rest.
 		std::atomic<bool> depthActive{ false };
 		// The hand is drawn here (kCyberDrawsHand): Minecraft leaves it out of the overlay.
@@ -699,6 +865,42 @@ float4 PSOver(float4 pos : SV_Position) : SV_Target {
 			}
 		}
 
+		// Minecraft's block outline: its twelve edges as thin bars of a_color (Minecraft's: black,
+		// 40% opaque), a_uv an opaque spot of the atlas for them to be drawn with.
+		void Outline(std::vector<proto::RenVertex>& a_out, const float a_min[3], const float a_max[3], const float a_uv[4], std::uint32_t a_color)
+		{
+			constexpr float kWidth = 0.008f;  // blocks: a couple of pixels a few blocks off
+			auto            bar = [&](const float a_from[3], int a_axis) {
+				float mn[3], mx[3];
+				for (int k = 0; k < 3; ++k) {
+					mn[k] = a_from[k] - kWidth;
+					mx[k] = a_from[k] + kWidth;
+				}
+				mx[a_axis] = a_from[a_axis] + (a_max[a_axis] - a_min[a_axis]) + kWidth;
+				// corner bits: 1 = +x, 2 = +y, 4 = +z; each face's corners in turn
+				static constexpr int kFaces[6][4] = { { 6, 7, 5, 4 }, { 3, 2, 0, 1 }, { 7, 3, 1, 5 }, { 2, 6, 4, 0 }, { 2, 3, 7, 6 }, { 4, 5, 1, 0 } };
+				for (const auto& face : kFaces) {
+					float q[4][3];
+					for (int c = 0; c < 4; ++c) {
+						q[c][0] = (face[c] & 1) ? mx[0] : mn[0];
+						q[c][1] = (face[c] & 2) ? mx[1] : mn[1];
+						q[c][2] = (face[c] & 4) ? mx[2] : mn[2];
+					}
+					Quad(a_out, q, a_uv, a_color, kFlagTranslucent);
+				}
+			};
+			for (int axis = 0; axis < 3; ++axis) {
+				const int a = (axis + 1) % 3, b = (axis + 2) % 3;
+				for (int i = 0; i < 4; ++i) {
+					float from[3];
+					from[axis] = a_min[axis];
+					from[a] = (i & 1) ? a_max[a] : a_min[a];
+					from[b] = (i & 2) ? a_max[b] : a_min[b];
+					bar(from, axis);
+				}
+			}
+		}
+
 		// Minecraft's arrow (or a trident) at a position, flying along d (unit length). Around that
 		// axis, s is the horizontal side and u the "up"; the fins sit at 45 degrees between them.
 		void BuildArrow(float px, float py, float pz, const float d[3], const float* a_uvSide, const float* a_uvBack, bool a_trident)
@@ -786,6 +988,12 @@ float4 PSOver(float4 pos : SV_Position) : SV_Target {
 					};
 					Quad(entityVerts, p, e.uv[0], 0xFFFFFFFFu, kFlagCutout);
 				}
+			}
+			// The targeted block's outline (or the cell of the city mining would dig), over the cracks.
+			if (a_entities.hasSelection && (a_entities.selUv[2] > a_entities.selUv[0] || a_entities.selUv[3] > a_entities.selUv[1])) {
+				const float mn[3] = { float(a_entities.selMin[0] - a_o[0]), float(a_entities.selMin[1] - a_o[1]), float(a_entities.selMin[2] - a_o[2]) };
+				const float mx[3] = { float(a_entities.selMax[0] - a_o[0]), float(a_entities.selMax[1] - a_o[1]), float(a_entities.selMax[2] - a_o[2]) };
+				Outline(crackVerts, mn, mx, a_entities.selUv, 0x66000000u);
 			}
 		}
 
@@ -919,7 +1127,12 @@ float4 PSOver(float4 pos : SV_Position) : SV_Target {
 			sceneRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
 			sceneRange.NumDescriptors = 1;
 			sceneRange.BaseShaderRegister = 3;
-			D3D12_ROOT_PARAMETER params[5]{};
+			D3D12_DESCRIPTOR_RANGE pictureRange{};
+			pictureRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+			pictureRange.NumDescriptors = 1;
+			pictureRange.BaseShaderRegister = 5;
+			// 64 DWORDs, all a root signature may have: Params (56), four tables (1 each), two root views (2 each).
+			D3D12_ROOT_PARAMETER params[7]{};
 			params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
 			params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 			params[0].DescriptorTable.NumDescriptorRanges = 1;
@@ -940,6 +1153,15 @@ float4 PSOver(float4 pos : SV_Position) : SV_Target {
 			params[4].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;  // blocks read it per corner (VSMain)
 			params[4].DescriptorTable.NumDescriptorRanges = 1;
 			params[4].DescriptorTable.pDescriptorRanges = &sceneRange;
+			// The cells dug out of the city round the camera (t4), a raw buffer in the dynamic ring.
+			params[5].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+			params[5].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+			params[5].Descriptor.ShaderRegister = 4;
+			// Its finished picture at full size (t5), for the backdrops of what was dug away.
+			params[6].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+			params[6].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+			params[6].DescriptorTable.NumDescriptorRanges = 1;
+			params[6].DescriptorTable.pDescriptorRanges = &pictureRange;
 
 			D3D12_STATIC_SAMPLER_DESC samplers[2]{};
 			samplers[0].Filter = D3D12_FILTER_MIN_MAG_POINT_MIP_LINEAR;  // pixel art up close, mips blended far away
@@ -952,7 +1174,7 @@ float4 PSOver(float4 pos : SV_Position) : SV_Target {
 			samplers[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
 			D3D12_ROOT_SIGNATURE_DESC rootDesc{};
-			rootDesc.NumParameters = 5;
+			rootDesc.NumParameters = 7;
 			rootDesc.pParameters = params;
 			rootDesc.NumStaticSamplers = 2;
 			rootDesc.pStaticSamplers = samplers;
@@ -1171,6 +1393,7 @@ float4 PSOver(float4 pos : SV_Position) : SV_Target {
 			a_commandList->SetGraphicsRootDescriptorTable(0, SrvSlot(0));  // the atlas
 			a_commandList->SetGraphicsRootDescriptorTable(3, SrvSlot(kDepthSlot));
 			a_commandList->SetGraphicsRootDescriptorTable(4, SrvSlot(kSceneSlot));
+			a_commandList->SetGraphicsRootDescriptorTable(6, SrvSlot(g.sceneHudless ? kHudlessSlot : kSceneFullSlot));
 			a_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 		}
 
@@ -1456,6 +1679,11 @@ float4 PSOver(float4 pos : SV_Position) : SV_Target {
 		Link::Get().DrainRender([](std::uint32_t a_type, const std::uint8_t* a_payload, std::uint32_t a_bytes) {
 			switch (a_type) {
 			case proto::kRenClearAll:
+				{
+					std::lock_guard lock(dugMutex);
+					dugSections.clear();
+					++dugVersion;
+				}
 				Builds::OnClearAll();
 				for (auto& [key, section] : g.sections) {
 					Retire(section.vertices);
@@ -1665,6 +1893,26 @@ float4 PSOver(float4 pos : SV_Position) : SV_Target {
 					g.avatarVertices.assign(vertices, vertices + header.vertexCount);
 					return;
 				}
+			case proto::kRenMount:
+				{
+					// What the player rides this frame; no batches when it rides nothing.
+					g.mountBatches.clear();
+					g.mountVertices.clear();
+					if (a_bytes < sizeof(proto::RenAvatar)) {
+						return;
+					}
+					const auto& header = *reinterpret_cast<const proto::RenAvatar*>(a_payload);
+					const UINT64 need = sizeof(proto::RenAvatar) + UINT64(header.batchCount) * sizeof(proto::RenBatch) +
+					                    UINT64(header.vertexCount) * sizeof(proto::RenVertex);
+					if (header.batchCount == 0 || header.vertexCount == 0 || a_bytes < need) {
+						return;
+					}
+					const auto* batches = reinterpret_cast<const proto::RenBatch*>(a_payload + sizeof(proto::RenAvatar));
+					const auto* vertices = reinterpret_cast<const proto::RenVertex*>(batches + header.batchCount);
+					g.mountBatches.assign(batches, batches + header.batchCount);
+					g.mountVertices.assign(vertices, vertices + header.vertexCount);
+					return;
+				}
 			case proto::kRenHand:
 				{
 					// The first-person hands and held items this frame; none in third person.
@@ -1686,8 +1934,26 @@ float4 PSOver(float4 pos : SV_Position) : SV_Target {
 					g.handFov = std::isfinite(header.fovDeg) ? std::clamp(header.fovDeg, 10.0f, 170.0f) : 70.0f;
 					return;
 				}
+			case proto::kRenDug:
+				{
+					// A section's cells dug out of the city: the picture is cut open there.
+					if (a_bytes < sizeof(proto::RenDug)) {
+						return;
+					}
+					const auto&     header = *reinterpret_cast<const proto::RenDug*>(a_payload);
+					const auto      key = SectionKey(header.sx, header.sy, header.sz);
+					std::lock_guard lock(dugMutex);
+					if (header.count > 0 && a_bytes >= sizeof(proto::RenDug) + 512) {
+						auto& bits = dugSections[key];
+						std::memcpy(bits.data(), a_payload + sizeof(proto::RenDug), 512);
+					} else {
+						dugSections.erase(key);
+					}
+					++dugVersion;
+					return;
+				}
 			default:
-				// The dug-block sets and the death ragdoll's parts: drained so the ring keeps moving.
+				// The death ragdoll's parts: drained so the ring keeps moving.
 				return;
 			}
 		}, 48ull << 20);
@@ -1808,6 +2074,16 @@ float4 PSOver(float4 pos : SV_Position) : SV_Target {
 			params.water[3] = std::clamp(waterSurface, 0.0f, 1.0f);
 		}
 
+		// Where Night City was dug out round the camera (only with its depth: without it the face rays
+		// see through the holes instead, UpdateOcclusion).
+		const bool dugShown = haveDepth && RefreshDugWindow(eyeX, eyeY, eyeZ);
+		if (dugShown) {
+			params.dug[0] = float(dugOrigin[0]);
+			params.dug[1] = float(dugOrigin[1]);
+			params.dug[2] = float(dugOrigin[2]);
+			params.dug[3] = 1.0f;
+		}
+
 		// Arrows, dropped items and cracks are built around a whole block near the camera, so their
 		// floats stay small; the scene (mobs, TNT, particles) comes relative to its own origin.
 		const double entityOrigin[3] = { std::floor(eyeX), std::floor(eyeY), std::floor(eyeZ) };
@@ -1823,9 +2099,11 @@ float4 PSOver(float4 pos : SV_Position) : SV_Target {
 			BuildWorldEntities(worldEntities, entityOrigin, right, upAxis);
 		}
 		const bool showAvatar = camera.valid && camera.avatar && !g.avatarVertices.empty();
+		// Only while V stands where Minecraft's player is.
+		const bool showMount = camera.valid && !g.mountVertices.empty() && cybercraft::State().puppeting.load();
 		// Not in a car: Cyberpunk drives there, and Minecraft's hand has nothing to hold up.
 		const bool showHand = litHand && !g.handVertices.empty() && cybercraft::State().puppeting.load();
-		if (g.sections.empty() && g.sceneVertices.empty() && entityVerts.empty() && crackVerts.empty() && !showAvatar && !showHand) {
+		if (g.sections.empty() && g.sceneVertices.empty() && entityVerts.empty() && crackVerts.empty() && !showAvatar && !showMount && !showHand) {
 			return;
 		}
 		UINT64     frameUsed = 0;
@@ -1833,10 +2111,19 @@ float4 PSOver(float4 pos : SV_Position) : SV_Target {
 		const auto entityAddress = entityVerts.empty() ? 0 : DynUpload(entityVerts.data(), entityVerts.size() * sizeof(proto::RenVertex), frameUsed);
 		const auto crackAddress = crackVerts.empty() ? 0 : DynUpload(crackVerts.data(), crackVerts.size() * sizeof(proto::RenVertex), frameUsed);
 		const auto avatarAddress = showAvatar ? DynUpload(g.avatarVertices.data(), g.avatarVertices.size() * sizeof(proto::RenVertex), frameUsed) : 0;
+		const auto mountAddress = showMount ? DynUpload(g.mountVertices.data(), g.mountVertices.size() * sizeof(proto::RenVertex), frameUsed) : 0;
 		const auto handAddress = showHand ? DynUpload(g.handVertices.data(), g.handVertices.size() * sizeof(proto::RenVertex), frameUsed) : 0;
+		// Always a whole window's worth behind the root view (empty without a dug cell), so no read
+		// of it can go past its end.
+		static const std::vector<std::uint32_t> noDug(std::size_t(kDugWords) * kDugH * kDugW, 0u);
+		const auto& dugCells = dugShown ? dugWindow : noDug;
+		const auto  dugAddress = DynUpload(dugCells.data(), dugCells.size() * sizeof(std::uint32_t), frameUsed);
+		if (!dugAddress || !dugShown) {
+			params.dug[3] = 0.0f;
+		}
 		// Streams are never hidden by the city's rays: one all-visible slice, as long as the longest.
 		const UINT longest = UINT(std::max({ g.sceneVertices.size(), entityVerts.size(), crackVerts.size(), showAvatar ? g.avatarVertices.size() : std::size_t(0),
-			showHand ? g.handVertices.size() : std::size_t(0) }));
+			showMount ? g.mountVertices.size() : std::size_t(0), showHand ? g.handVertices.size() : std::size_t(0) }));
 		const auto allVisible = VisibilitySlice(~0ull, (longest + 5) / 6);
 		auto       drawStream = [&](D3D12_GPU_VIRTUAL_ADDRESS a_address, UINT a_vertices, UINT a_first, UINT a_count, const float a_origin[3]) {
 			params.origin[0] = a_origin[0];
@@ -1864,6 +2151,7 @@ float4 PSOver(float4 pos : SV_Position) : SV_Target {
 		a_commandList->RSSetViewports(1, &viewport);
 		a_commandList->RSSetScissorRects(1, &scissor);
 		BeginBlocks(a_commandList, dsv);
+		a_commandList->SetGraphicsRootShaderResourceView(5, dugAddress);
 
 		// Mobs, TNT, the explosion's particles: Minecraft's own entity renderer output, a batch per
 		// texture (0: the atlas, else an entity texture). The player's body and hands the same way.
@@ -1926,6 +2214,9 @@ float4 PSOver(float4 pos : SV_Position) : SV_Target {
 			if (avatarAddress) {
 				drawBatches(pass, avatarAddress, g.avatarBatches, UINT(g.avatarVertices.size()), feetOrigin);
 			}
+			if (mountAddress) {
+				drawBatches(pass, mountAddress, g.mountBatches, UINT(g.mountVertices.size()), feetOrigin);
+			}
 		}
 		EndBlocks(a_commandList, a_rtv, true);
 
@@ -1941,8 +2232,10 @@ float4 PSOver(float4 pos : SV_Position) : SV_Target {
 			params.sceneParams[3] *= 0.3f;  // the side a face turns to, at the scale of an arm
 			params.tone[2] = 0.0f;          // no haze an arm's length away
 			params.water[1] = 0.0f;         // nor water: Cyberpunk draws none over its hands either
+			params.dug[3] = 0.0f;
 			const float viewOrigin[3] = { 0.0f, 0.0f, 0.0f };
 			BeginBlocks(a_commandList, dsv);
+			a_commandList->SetGraphicsRootShaderResourceView(5, dugAddress);
 			for (int pass = 0; pass < 2; ++pass) {
 				a_commandList->SetPipelineState(pass == 0 ? g.psoOpaque.Get() : g.psoTranslucent.Get());
 				params.pass = float(pass);
@@ -2006,6 +2299,7 @@ float4 PSOver(float4 pos : SV_Position) : SV_Target {
 	void CaptureScene(ID3D12GraphicsCommandList* a_commandList, ID3D12Resource* a_backBuffer)
 	{
 		g.sceneLive = false;
+		g.sceneHudless = false;
 		if (!g.ready || !a_backBuffer) {
 			return;
 		}
@@ -2090,11 +2384,13 @@ float4 PSOver(float4 pos : SV_Position) : SV_Target {
 		a_commandList->SetGraphicsRootDescriptorTable(0, SrvSlot(0));
 		a_commandList->SetGraphicsRootDescriptorTable(3, SrvSlot(kDepthSlot));
 		a_commandList->SetGraphicsRootDescriptorTable(4, SrvSlot(lightFromHudless ? kHudlessSlot : kSceneFullSlot));
+		a_commandList->SetGraphicsRootDescriptorTable(6, SrvSlot(kSceneFullSlot));
 		a_commandList->SetPipelineState(g.psoDown.Get());
 		a_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 		a_commandList->DrawInstanced(3, 1, 0, 0);
 		Transition(a_commandList, g.sceneSmall.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 		g.sceneLive = true;
+		g.sceneHudless = lightFromHudless;
 	}
 
 	bool DepthActive()
@@ -2105,6 +2401,21 @@ float4 PSOver(float4 pos : SV_Position) : SV_Target {
 	bool DrawsHand()
 	{
 		return drawsHand.load(std::memory_order_relaxed);
+	}
+
+	bool DugAt(double a_x, double a_y, double a_z)
+	{
+		const auto x = std::int32_t(std::floor(a_x)), y = std::int32_t(std::floor(a_y)), z = std::int32_t(std::floor(a_z));
+		std::lock_guard lock(dugMutex);
+		if (dugSections.empty()) {
+			return false;
+		}
+		const auto found = dugSections.find(SectionKey(x >> 4, y >> 4, z >> 4));
+		if (found == dugSections.end()) {
+			return false;
+		}
+		const int bit = (x & 15) + 16 * (z & 15) + 256 * (y & 15);
+		return ((found->second[bit >> 6] >> (bit & 63)) & 1) != 0;
 	}
 
 	void UpdateOcclusion(const McVec& a_eyeMc, int a_budget)
@@ -2149,10 +2460,33 @@ float4 PSOver(float4 pos : SV_Position) : SV_Target {
 		}
 
 		// A face's centre lies on the block's surface, which may rest on Cyberpunk's ground: stop
-		// the ray a little short, and count only what stands well in front of it.
+		// the ray a little short, and count only what stands well in front of it. What was dug out
+		// of the city doesn't count (with the shader's leeway, Cut): the ray goes on through it.
 		auto& collision = Collision::Get();
 		for (auto& job : jobs) {
-			job.visible = !collision.Blocked(a_eyeMc, job.centre, 0.15);
+			const double dx = job.centre.x - a_eyeMc.x, dy = job.centre.y - a_eyeMc.y, dz = job.centre.z - a_eyeMc.z;
+			const double length = std::sqrt(dx * dx + dy * dy + dz * dz);
+			if (length < 1e-6) {
+				continue;
+			}
+			const McVec along{ dx / length, dy / length, dz / length };
+			McVec       from = a_eyeMc;
+			for (int surface = 0; surface < 4; ++surface) {
+				const auto hit = collision.FirstHit(from, job.centre);
+				if (!hit) {
+					break;
+				}
+				const double hx = hit->x - a_eyeMc.x, hy = hit->y - a_eyeMc.y, hz = hit->z - a_eyeMc.z;
+				if (std::sqrt(hx * hx + hy * hy + hz * hz) >= length - 0.15) {
+					break;
+				}
+				if (!DugAt(hit->x, hit->y, hit->z) && !DugAt(hit->x, hit->y - 0.2, hit->z) &&
+					!DugAt(hit->x + along.x * 0.25, hit->y + along.y * 0.25, hit->z + along.z * 0.25)) {
+					job.visible = false;
+					break;
+				}
+				from = { hit->x + along.x * 0.05, hit->y + along.y * 0.05, hit->z + along.z * 0.05 };
+			}
 		}
 
 		std::lock_guard lock(facesMutex);
@@ -2168,6 +2502,11 @@ float4 PSOver(float4 pos : SV_Position) : SV_Target {
 	{
 		g = State{};
 		drawsHand = false;
+		{
+			std::lock_guard lock(dugMutex);
+			dugSections.clear();
+			++dugVersion;
+		}
 		std::lock_guard lock(facesMutex);
 		faces.clear();
 	}

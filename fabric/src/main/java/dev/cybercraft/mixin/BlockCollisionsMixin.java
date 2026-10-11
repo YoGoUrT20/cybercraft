@@ -32,8 +32,8 @@ public abstract class BlockCollisionsMixin {
 		CollisionContext context, BlockState state, CollisionGetter level, BlockPos pos, Operation<VoxelShape> original
 	) {
 		VoxelShape blockShape = original.call(context, state, level, pos);
-		// The walls of holes dug into the city (CyberDig): solid for everyone. Digging into the city
-		// is off by design (DESIGN.md, Decisions), so normally there are none.
+		// The walls of holes dug into the city (CyberDig): solid for everyone. The city's own
+		// collision is gone in the dug cells themselves (CyberCollision.shapeAt).
 		if (state.isAir()) {
 			VoxelShape wall = CyberDig.wallShape(level, pos);
 			if (wall != null) {

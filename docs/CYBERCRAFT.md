@@ -20,7 +20,7 @@ The last three, and setting the weather, need [Codeware](https://github.com/psib
 | 1 | Walk Night City in MC physics | Done. Ray-cast collision, input, puppet. Looking is Minecraft's own mouse math; Cyberpunk's camera is held at its pitch (unrun). |
 | 2 | Overlay | Done (D3D12). Hand, hotbar, GUI screens, cursor, crosshair invert pass. Drawn before frame generation (unrun with it on). |
 | 3 | Combat | **Subset:** the NPC under the crosshair plus up to eight recently fought, not everyone in a radius. Explosions do hit everyone in reach. |
-| 4 | Blocks | Blocks, entities and particles draw from Cyberpunk's camera, hidden behind the city (pixel-exact with DLSS, per face without). Light-emitting blocks get Cyberpunk lights and solid blocks get colliders that NPCs, cars and bullets meet (unrun, Codeware). |
+| 4 | Blocks | Blocks, entities and particles draw from Cyberpunk's camera, hidden behind the city (pixel-exact with DLSS, per face without). Light-emitting blocks get Cyberpunk lights and solid blocks get colliders that NPCs, cars and bullets meet (unrun, Codeware). Digging into the city: holes cut out of Cyberpunk's picture by its depth, lined with dirt and stone, kept in place when the grid moves (unrun). |
 | 5 | Full world | Water, interaction (`F`) and vehicles done. Stage C not portable; dimensions not applicable. |
 | 6 | Persistence & polish | Time and weather sync, both ways, and third person with Minecraft's body (unrun). No save snapshots. |
 
@@ -141,6 +141,27 @@ exports, copies that depth in the game's own command list, and the block pass de
 it: walls, cars and people hide blocks pixel by pixel. Without DLSS (or with `bSceneDepth = 0`)
 there's nothing to borrow, and `World::UpdateOcclusion` ray-tests block faces from the camera
 instead (`iOcclusionRays` per frame): only the static city hides blocks, and a face is hidden whole.
+
+### Holes are cut out of the picture, not the city
+
+Nothing exposes Cyberpunk's meshes or colliders for editing, so a hole dug into the city (DESIGN.md
+§5.3) is real for Minecraft (the dug cells leave its collision) and in the picture only: the block
+shader rebuilds where Cyberpunk's depth puts each pixel, and where that is in a dug cell, Cyberpunk's
+surface no longer hides the hole's dirt and stone behind it. Cyberpunk itself still has its street
+there: NPCs and cars walk and drive over the hole, and V is held in it by being placed every frame,
+with her own collision off while she's in it (Cyberpunk lifted her out of its colliders every frame,
+and she shook). Turning CyberCraft off (or Minecraft going)
+puts V back on the street over the hole. Without DLSS the hole's walls show a face at a time.
+
+The voxels show surfaces only, so what's behind them can't be told: under a street and behind a
+wall it's all ground (dirt for the first three or so blocks, then stone with ores, bedrock from
+sixteen down). Things standing free on a floor with air round them (a chair, a bench, a bin, a low
+wall) are the exception: dug, they're just gone, with no stone round them. Nothing behind them was
+ever in Cyberpunk's picture, so the plugin paints over where they stood from the picture round the
+hole: a smooth guess, not what's really there. Explosions take the city's surfaces like stone, and the ground under them only where
+nothing of the city lies within six blocks below: a room can't be told from earth, and a blast in
+one filled it with stone. **Not yet run in the game.** The leeway between Cyberpunk's visible surface and its collision (0.2 blocks under, 0.25
+along the sight line in `World.cpp`'s `Cut`) is a guess to check.
 
 ### Under the HUD needs frame generation
 
@@ -298,6 +319,12 @@ Those feet are V's as the game has them when the camera is read, not the ones sh
 that frame: those ran a frame's walk ahead of the camera, by however long the frame took, and the
 body jiggled while walking.
 
+What Minecraft's player rides (a boat, a minecart, a horse) is drawn at those feet too
+(`kRenMount`), in any view. With the rest of the scene it stood where Minecraft had it at its own
+frame's partial tick, while the camera follows V's feet on Cyberpunk's frame clock, and Minecraft
+draws fewer frames than Cyberpunk: the boat shook about under V, on water and on blocks alike.
+**Not yet confirmed in a run.**
+
 A run hid V (55 parts) but drew no body in her place: the skin, armour and cape reach the plugin
 in its first frames of drawing, and entity textures were refused a descriptor slot until frame 8
 (a freed slot waits 8 frames before reuse, and never-used slots were treated as freed at frame 0).
@@ -319,8 +346,10 @@ first-person body clips into view with the camera lower than hers (always, below
 ### V is hidden in first person too
 
 Looking down used to show V's legs and clothes under Minecraft's hand. Now V is hidden whenever
-Minecraft drives her (`bHideV`), and Minecraft's body is drawn in her place in first person as well
-(`bMinecraftBody`, `kCyberBodyFirstPerson`): the same capture as third person, without the head (the
+Minecraft drives her (`bHideV`), and looking down shows only the hand, as Minecraft's own first
+person does. With `bMinecraftBody = 1` (off by default: Minecraft's legs under the camera read as
+someone else's) Minecraft's body is drawn in her place in first person as well
+(`kCyberBodyFirstPerson`): the same capture as third person, without the head (the
 camera is in it), the arms (Minecraft's hand is drawn on its own), what's in hand, on the head or on
 the shoulders. It stands `fBack` blocks behind the eye along the way the body faces, so looking
 straight down shows the chest's front and the feet rather than the tops of the shoulders, as
@@ -546,6 +575,12 @@ teleport, as `Insert` makes, lets go of V until then: for a few frames the camer
 eye height instead of Minecraft's, a bob up and down.) The city's collision and the builds' lights
 and colliders are resent half a second after the last nudge, not on every one.
 
+Holes dug into the city don't move with the grid: they're part of Night City. `Insert` and the scale
+send Minecraft how its coordinates moved (`kColGridMoved`), and the host's server moves the holes
+and what's in them back to where they were dug, still opening just under the street. The arrows'
+nudges are smaller than a block, so the holes lag behind them (`fHoleLagX`/`fHoleLagZ`) and catch
+up a whole block at a time.
+
 ### V near walls
 
 V's body in Cyberpunk is wider than Minecraft's player (0.3 blocks each way: 0.225 m at 0.75), so
@@ -705,7 +740,7 @@ bOrbitPitch = 0                    ; 1 if the camera stays level while V looks u
 
 [Body]
 bHideV = 1                         ; V hidden in first person too (always in third person)
-bMinecraftBody = 1                 ; Minecraft's body in her place when you look down; 0: nothing
+bMinecraftBody = 0                 ; 1: Minecraft's body in her place when you look down
 fBack = 0.2                        ; blocks it stands behind the eye in first person
 
 [Debug]

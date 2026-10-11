@@ -47,6 +47,52 @@ namespace cybercraft::Grid
 			}
 		}
 
+		// How far the holes lag behind where they were dug (Minecraft blocks, along the grid's x and z):
+		// the arrows' nudges they haven't followed yet (HolesFollowNudge).
+		double holeLagX = 0.0, holeLagZ = 0.0;
+
+		struct Point
+		{
+			double x, y, z;
+		};
+
+		// McToCp and CpToMc (Link.h) for a given grid, in doubles.
+		Point ToCp(const Frame& a_frame, const Point& a_mc)
+		{
+			const double yaw = a_frame.yaw * 0.017453292519943295;
+			const double c = std::cos(yaw), s = std::sin(yaw);
+			const double gx = a_mc.x * a_frame.size + a_frame.shiftX, gy = -a_mc.z * a_frame.size + a_frame.shiftY;
+			return { c * gx - s * gy, s * gx + c * gy, a_mc.y * a_frame.size + a_frame.offset };
+		}
+
+		Point ToMc(const Frame& a_frame, const Point& a_cp)
+		{
+			const double yaw = a_frame.yaw * 0.017453292519943295;
+			const double c = std::cos(yaw), s = std::sin(yaw);
+			const double gx = c * a_cp.x + s * a_cp.y, gy = -s * a_cp.x + c * a_cp.y;
+			return { (gx - a_frame.shiftX) / a_frame.size, (a_cp.z - a_frame.offset) / a_frame.size, -(gy - a_frame.shiftY) / a_frame.size };
+		}
+
+		// Minecraft coordinates under a_before -> now: x' = m00 x + m02 z + tx, y' = m11 y + ty, ...
+		proto::ColGridMoved Move(const Frame& a_before)
+		{
+			const Frame now = Current();
+			auto        map = [&](double a_x, double a_y, double a_z) { return ToMc(now, ToCp(a_before, { a_x, a_y, a_z })); };
+			const Point o = map(0, 0, 0), ex = map(1, 0, 0), ey = map(0, 1, 0), ez = map(0, 0, 1);
+			proto::ColGridMoved move{};
+			move.m00 = ex.x - o.x;
+			move.m20 = ex.z - o.z;
+			move.m02 = ez.x - o.x;
+			move.m22 = ez.z - o.z;
+			move.m11 = ey.y - o.y;
+			move.tx = o.x;
+			move.ty = o.y;
+			move.tz = o.z;
+			return move;
+		}
+
+		void SaveLag();
+
 		// gGridOffset for the saved ground at the current scale: ground - offset is a whole block.
 		void ApplyOffset()
 		{
@@ -66,6 +112,8 @@ namespace cybercraft::Grid
 			gGridYaw = ReadSaved(path, L"fGridYaw", L"0");
 			gGridShiftX = ReadSaved(path, L"fGridShiftX", L"0");
 			gGridShiftY = ReadSaved(path, L"fGridShiftY", L"0");
+			holeLagX = ReadSaved(path, L"fHoleLagX", L"0");
+			holeLagZ = ReadSaved(path, L"fHoleLagZ", L"0");
 		}
 		ApplyOffset();
 		logger::info("grid: a Minecraft block is {:.2f} m; the grid sits {:.3f} m up against Cyberpunk's heights, turned {:.1f} degrees", MetresPerBlock(),
@@ -136,5 +184,53 @@ namespace cybercraft::Grid
 		if (Config::Diagnostics()) {
 			logger::info("grid: nudged ({:+.3f}, {:+.3f}) m in Cyberpunk x, y", a_cpDx, a_cpDy);
 		}
+	}
+
+	Frame Current()
+	{
+		return { MetresPerBlock(), gGridOffset.load(), gGridYaw.load(), gGridShiftX.load(), gGridShiftY.load() };
+	}
+
+	namespace
+	{
+		void SaveLag()
+		{
+			Save(L"fHoleLagX", holeLagX);
+			Save(L"fHoleLagZ", holeLagZ);
+		}
+	}
+
+	proto::ColGridMoved MovedSince(const Frame& a_before)
+	{
+		// Where a hole's contents belong: lag on from where they are, then moved.
+		auto move = Move(a_before);
+		move.tx += move.m00 * holeLagX + move.m02 * holeLagZ;
+		move.tz += move.m20 * holeLagX + move.m22 * holeLagZ;
+		if (holeLagX != 0.0 || holeLagZ != 0.0) {
+			holeLagX = holeLagZ = 0.0;
+			SaveLag();
+		}
+		return move;
+	}
+
+	std::optional<proto::ColGridMoved> HolesFollowNudge(const Frame& a_before)
+	{
+		const auto move = Move(a_before);
+		holeLagX += move.tx;
+		holeLagZ += move.tz;
+		const double stepX = std::round(holeLagX), stepZ = std::round(holeLagZ);
+		holeLagX -= stepX;
+		holeLagZ -= stepZ;
+		SaveLag();
+		if (stepX == 0.0 && stepZ == 0.0) {
+			return std::nullopt;
+		}
+		proto::ColGridMoved shift{};
+		shift.m00 = shift.m22 = shift.m11 = 1.0;
+		shift.tx = stepX;
+		shift.tz = stepZ;
+		shift.flags = proto::kGridMovedShift;
+		logger::info("grid: the holes dug into the city catch up with the nudges by ({:+.0f}, {:+.0f}) blocks", stepX, stepZ);
+		return shift;
 	}
 }

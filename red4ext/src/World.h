@@ -14,6 +14,10 @@
 // Cyberpunk's depth (SceneDepth, DLSS); without it the city hides blocks only face by face:
 // UpdateOcclusion casts a ray from the camera to each face and hides the faces something static
 // stands in front of.
+//
+// Where Minecraft dug into the city (kRenDug), the city is cut out of the picture: a pixel whose
+// depth lies in a dug block doesn't hide the blocks behind it, so the hole's walls and floor show
+// in its place. Without Cyberpunk's depth, the face rays go on through dug blocks instead.
 namespace cybercraft::World
 {
 	// Creates the pipelines and the targets for this back buffer's size and format. Cheap once ready.
@@ -42,8 +46,12 @@ namespace cybercraft::World
 
 	// Ray-tests up to a_budget block faces against Cyberpunk's city from the camera eye (Minecraft
 	// coordinates), round robin over all of them. Game thread (ray casts are main-thread only).
-	// Only needed without Cyberpunk's depth.
+	// Only needed without Cyberpunk's depth. The city doesn't hide a face where it was dug out.
 	void UpdateOcclusion(const McVec& a_eyeMc, int a_budget);
+
+	// Whether the Minecraft block holding (a_x, a_y, a_z) was dug out of Night City (kRenDug): the
+	// city is cut out of the picture there, and the hole's walls and floor show. Any thread.
+	bool DugAt(double a_x, double a_y, double a_z);
 
 	void Shutdown();
 }

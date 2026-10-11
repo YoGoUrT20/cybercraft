@@ -182,6 +182,19 @@ namespace cybercraft::Puppet
 		had = true;
 	}
 
+	void Place(const McVec& a_feetMc, float a_cpYaw)
+	{
+		auto player = rtti::Player();
+		auto* facility = rtti::System("gameTeleportationFacility");
+		if (!player || !facility) {
+			return;
+		}
+		const auto       at = McToCp(a_feetMc.x, a_feetMc.y, a_feetMc.z);
+		RED4ext::Vector4 position{ at.x, at.y, at.z, 1.0f };
+		RED4ext::EulerAngles rotation{ 0.0f, 0.0f, a_cpYaw };
+		teleport.Call(facility, nullptr, player, position, rotation);
+	}
+
 	void Release()
 	{
 		had = false;
