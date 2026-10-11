@@ -332,9 +332,9 @@ Minecraft sends each texture once, so they never came back. Never-used slots are
 not yet confirmed in a run.
 
 In every view the camera also stands at Minecraft's eye, its height in blocks times the scale
-(see "Minecraft's scale"): 1.89 standing (vanilla's 1.62 raised by AvatarEyeMixin, 20 cm at 0.75 m
+(see "Minecraft's scale"): 1.95 standing (vanilla's 1.62 raised by AvatarEyeMixin, 25 cm at 0.75 m
 a block), which at less than a metre a block is below V's own camera, and lower still sneaking
-(1.48), crawling and swimming. Straight down in the world, which in
+(1.45), crawling and swimming. Straight down in the world, which in
 the pitched frame is down and along the look. Minecraft eases its eye down over a few ticks; in first person
 `McState::eyeHeight` is the camera's eased height already, and in third person the Fabric side
 eases it the same way instead of sending the eye's snap.
@@ -447,7 +447,7 @@ oversized next to Night City: the player as tall as V but twice as broad, a cow 
 bigger than life. The whole of Minecraft's world is scaled, physics included, so blocks still line
 up with the player and mobs with blocks; V walks, jumps and reaches less far in metres, NPCs are
 taller in blocks (their boxes are 0.6 × 1.8 m), and Cyberpunk's camera sits at Minecraft's eye,
-`1.89 × scale` above V's feet. That assumes Cyberpunk's own camera stands 1.62 m up; if it doesn't,
+`1.95 × scale` above V's feet. That assumes Cyberpunk's own camera stands 1.62 m up; if it doesn't,
 blocks picked are slightly off the crosshair vertically, as they were at a metre a block.
 
 The plugin re-reads the scale twice a second; a change resends the city's collision, respawns the

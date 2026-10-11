@@ -89,7 +89,7 @@ both scale with it unchanged. What's left are lengths that cross between the two
 against the game's (metres), third person's camera distance, NPC boxes (0.6 × 1.8 m, in blocks),
 colliders and light radii for builds, search radii.
 
-- **Eye height.** Cyberpunk's camera is moved to Minecraft's eye, `1.89·s` above V's feet (the
+- **Eye height.** Cyberpunk's camera is moved to Minecraft's eye, `1.95·s` above V's feet (the
   camera is taken to stand at 1.62 m), so below a metre a block V sees the city from lower down.
   Players' eyes are raised from vanilla's 1.62 blocks (AvatarEyeMixin): at 0.75 m a block that put
   the camera at the shoulders of Night City's people.

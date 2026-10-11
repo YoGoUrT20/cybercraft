@@ -120,7 +120,7 @@ with `bDiagnostics = 1` settles most of it. The log should start with
 - Sneaking (Shift), in either view: the camera should sink about a third of a block over a few
   ticks and come back up on release.
 - Minecraft's scale (`fMetresPerBlock`, Mod Settings' "Minecraft scale"): at 0.75 the view should
-  sit about 0.2 m below V's own, blocks, mobs and Minecraft's body should look the size of props and
+  sit about 0.15 m below V's own, blocks, mobs and Minecraft's body should look the size of props and
   people rather than bigger, and the highlighted block should be the one under the crosshair. If
   it's off vertically, Cyberpunk's camera isn't 1.62 m up (`kCyberpunkEyeHeight`, Game.cpp).
   Moving the slider in game should resend the city and put Minecraft's player back on V.
