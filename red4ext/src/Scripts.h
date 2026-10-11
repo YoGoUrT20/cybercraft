@@ -33,4 +33,9 @@ namespace cybercraft::Scripts
 	// V's weapons holstered and locked (the game's no-combat restriction) or free again. Vanilla
 	// script. Returns whether this plugin's restriction is on V now; empty when the script isn't loaded.
 	std::optional<bool> SetWeaponsBlocked(bool a_blocked);
+
+	// Minecraft hurt an NPC (a gameObject): it cries out, and with a non-zero a_impulse (Cyberpunk
+	// world) it is ragdolled and sent flying. Vanilla script. Returns whether it went flying; empty
+	// when the script isn't loaded.
+	std::optional<bool> NpcHit(const RED4ext::Handle<RED4ext::IScriptable>& a_npc, const CpVec& a_impulse);
 }

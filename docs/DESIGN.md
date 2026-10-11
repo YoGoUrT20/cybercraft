@@ -225,7 +225,8 @@ the protocol's 32-bit id.
 Minecraft resolves the hit on the stand-in and sends `HitActor {id, damage, knockback}`. The plugin
 applies it as a health-pool change (`gameStatPoolsSystem::RequestChangingStatPoolValue`, Health),
 scaled by `fDamageToGame`. Explosions (`kEvExplosion`) hurt every NPC in reach, found through
-`GetTargetParts`, with Minecraft's own falloff.
+`GetTargetParts`, with Minecraft's own falloff. The NPC cries out, and in fun mode (Mod Settings) a
+sword hit ragdolls it and pushes it along the knockback (`CyberCraftNpcHit`, `fSwordFling`).
 
 ### 8.3 An NPC hits you
 

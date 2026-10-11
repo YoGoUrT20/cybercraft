@@ -7,8 +7,8 @@
 // and get their light or collider once they have their entity ID (Entity/Initialize: at
 // Entity/Assemble it isn't assigned yet, so nothing matched and no collider was ever added; World
 // Builder adds its components at Initialize too). Without Codeware none of this is compiled,
-// and the plugin finds nothing to call. The last two functions (is F Cyberpunk's right now, V's
-// weapons locked away) are vanilla and always there.
+// and the plugin finds nothing to call. The last three functions (an NPC Minecraft hit reacts, is F
+// Cyberpunk's right now, V's weapons locked away) are vanilla and always there.
 
 @if(ModuleExists("Codeware"))
 public class CyberCraftSpawn {
@@ -326,6 +326,29 @@ public static func CyberCraftSetPlayerBodyVisible(visible: Bool) -> Int32 {
 @if(ModuleExists("Codeware"))
 public static func CyberCraftComponentsMade(lights: Bool) -> Int32 {
   return CyberCraftHost.Made(lights);
+}
+
+// Minecraft hurt an NPC (Combat.cpp). Its health is taken as a stat pool change, which skips the
+// game's hit pipeline and everything an NPC does when hit, so two of those are done here. It cries
+// out, as for any damaging hit (ScriptedPuppet.PuppetDamagePipelineFinalized). And given an impulse
+// (a sword's knockback, Cyberpunk world) it goes flying the way the game's own very strong hits send
+// it (HitReactionComponent): ragdolled, then pushed once the ragdoll is up, the whole body at once.
+// A living NPC gets back up (NPCPuppet.OnRagdollEnabledEvent); the game's CanRagdoll keeps bosses,
+// MaxTac and NPCs in cars or finishers on their feet. Vanilla only. Returns whether it went flying.
+public static func CyberCraftNpcHit(target: ref<GameObject>, impulse: Vector4) -> Bool {
+  if !IsDefined(target) {
+    return false;
+  }
+  if ScriptedPuppet.IsAlive(target) {
+    GameObject.PlayVoiceOver(target, n"vo_any_damage_hit", n"Scripts:CyberCraft");
+  }
+  if Vector4.IsZero(impulse) || !ScriptedPuppet.CanRagdoll(target) {
+    return false;
+  }
+  target.QueueEvent(CreateForceRagdollEvent(n"CyberCraft: Minecraft knockback"));
+  GameInstance.GetDelaySystem(target.GetGame())
+    .DelayEvent(target, CreateRagdollApplyImpulseEvent(target.GetWorldPosition(), impulse, 10000.0), 0.1, false);
+  return true;
 }
 
 // Cyberpunk offers something to do with F right now: an interaction (doors, terminals, vehicles,

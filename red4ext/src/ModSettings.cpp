@@ -19,9 +19,9 @@ namespace cybercraft::ModSettings
 			return value;
 		}
 
-		std::optional<bool> ReadEnabled()
+		std::optional<bool> ReadBool(const wchar_t* a_key)
 		{
-			const auto  text = ReadValue(L"cyberCraftEnabled");
+			const auto  text = ReadValue(a_key);
 			const auto* value = text.c_str();
 			if (::_wcsicmp(value, L"false") == 0 || std::wcscmp(value, L"0") == 0) {
 				return false;
@@ -31,19 +31,42 @@ namespace cybercraft::ModSettings
 			}
 			return std::nullopt;
 		}
+
+		// A toggle as last saved, re-read at most twice a second; a_default until it has been saved.
+		class Toggle
+		{
+		public:
+			Toggle(const wchar_t* a_key, bool a_default) :
+				key_(a_key), value_(ReadBool(a_key).value_or(a_default)), next_(std::chrono::steady_clock::now() + 500ms) {}
+
+			bool Get()
+			{
+				if (const auto now = std::chrono::steady_clock::now(); now >= next_) {
+					next_ = now + 500ms;
+					if (const auto read = ReadBool(key_)) {
+						value_ = *read;
+					}
+				}
+				return value_;
+			}
+
+		private:
+			const wchar_t*                        key_;
+			bool                                  value_;
+			std::chrono::steady_clock::time_point next_;
+		};
 	}
 
 	bool Enabled()
 	{
-		static bool enabled = ReadEnabled().value_or(true);
-		static auto next = std::chrono::steady_clock::now() + 500ms;
-		if (const auto now = std::chrono::steady_clock::now(); now >= next) {
-			next = now + 500ms;
-			if (const auto read = ReadEnabled()) {
-				enabled = *read;
-			}
-		}
-		return enabled;
+		static Toggle enabled(L"cyberCraftEnabled", true);
+		return enabled.Get();
+	}
+
+	bool FunMode()
+	{
+		static Toggle funMode(L"cyberCraftFunMode", true);
+		return funMode.Get();
 	}
 
 	std::optional<float> MetresPerBlock()

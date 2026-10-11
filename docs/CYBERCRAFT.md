@@ -6,8 +6,8 @@ answer than the design would like.
 
 The plugin has been run in Cyberpunk 2077 **2.31**: V walks Night City on Minecraft physics, the
 overlay and blocks draw, and the game calls below were checked against the live game's RTTI dump.
-It is still early and experimental. **Seven things are new and haven't been run in the game yet:**
-time and weather sync, third person, Minecraft's body in first person, lights for light-emitting
+It is still early and experimental. **Eight things are new and haven't been run in the game yet:**
+NPCs reacting to Minecraft's hits (a cry, flying from a sword), time and weather sync, third person, Minecraft's body in first person, lights for light-emitting
 blocks, colliders for builds, drawing with frame generation on, and blocks under Cyberpunk's HUD.
 The last three, and setting the weather, need [Codeware](https://github.com/psiberx/cp2077-codeware)
 (they go through `scripts/CyberCraft.reds`); without it they're off and everything else works.
@@ -362,6 +362,17 @@ Damage crosses the link as the design intends: Minecraft resolves the swing (rea
 crits, shields) and only the result is applied, as a health-pool change. V's own health is polled
 rather than hooked; a drop becomes a Minecraft hurt event.
 
+A health-pool change skips the game's hit pipeline and the NPC's own reactions with it, so
+`CyberCraftNpcHit` (vanilla script) gives two back. The NPC cries out, as for any damaging hit
+(`vo_any_damage_hit`). And in Mod Settings' **Fun mode** (`cyberCraftFunMode`, on by default and
+until saved off, read from `user.ini` like **Enable CyberCraft**) a sword sends it flying the way
+the game's own very strong hits do: ragdolled, then pushed a tenth of a second later along
+Minecraft's knockback, `fSwordFling` per unit of it, and up as far as Minecraft lifts a mob. A
+living NPC gets back up; the game's `CanRagdoll` keeps bosses and MaxTac on their feet. An arrow
+that hits an NPC also gives its shooter vanilla's hit ding, which Minecraft only plays for arrows
+hitting players: the stand-in itself is silent, so the arrow sounded like one in a wall. **Not yet
+confirmed in a run:** how far `fSwordFling` 250 throws someone, and that crowd NPCs have the cry.
+
 ### Particles
 
 Nothing Cyberpunk-specific. Minecraft's particles (crits, potion swirls, splash bursts, smoke,
@@ -635,6 +646,7 @@ fDamageToGame = 5                  ; Minecraft damage -> NPC health percent
 fDamageFromGame = 0.2              ; V's health percent lost -> Minecraft damage
 fTargetReach = 30                  ; metres
 fRememberSeconds = 30
+fSwordFling = 250                  ; ragdoll impulse per unit of a sword's Minecraft knockback; 0: off
 
 [World]
 fMetresPerBlock = 0.75             ; Minecraft's scale: metres per block (Mod Settings' slider wins once saved)

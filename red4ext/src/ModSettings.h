@@ -2,7 +2,8 @@
 
 // CyberCraft's entry in Cyberpunk's Mod Settings (scripts/CyberCraftModSettings.reds, jackhumbert's
 // Mod Settings mod). "Enable CyberCraft" turns the whole mod off and on, "Minecraft scale" sizes
-// Minecraft's world against Night City (Grid.cpp). Its "Open Minecraft settings"
+// Minecraft's world against Night City (Grid.cpp), "Fun mode" lets swords send NPCs flying
+// (Combat.cpp). Its "Open Minecraft settings"
 // row leaves a request in the script, which this collects every frame in game and passes on to
 // Minecraft as "open your options screen". The script has closed Cyberpunk's menu by then, so the
 // screen shows over the game like any other.
@@ -12,6 +13,9 @@ namespace cybercraft::ModSettings
 	// Mod Settings' user.ini, where it keeps what is accepted, so it is known at load (before
 	// Minecraft would be started) and in the main menu; re-read at most twice a second. Main thread.
 	bool Enabled();
+
+	// "Fun mode": swords send NPCs flying (Combat.cpp). Read like Enabled(); on until saved off.
+	bool FunMode();
 
 	// "Minecraft scale", metres per block, as Mod Settings last saved it; nothing without Mod
 	// Settings or until it has saved CyberCraft's rows once. Read from user.ini each call (Grid.cpp

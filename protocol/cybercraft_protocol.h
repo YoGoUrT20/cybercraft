@@ -297,7 +297,7 @@ namespace cybercraft::proto
 		kHitFire = 1u << 3,
 	};
 
-	// What landed a kEvHitActor (for impact effects and sounds; the plugin doesn't use it yet).
+	// What landed a kEvHitActor (for impact effects and sounds; the plugin sends NPCs flying on kWeaponBlade).
 	enum HitWeapon : std::uint32_t
 	{
 		kWeaponUnarmed = 0,

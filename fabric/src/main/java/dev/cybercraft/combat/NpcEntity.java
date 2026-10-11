@@ -1,12 +1,15 @@
 package dev.cybercraft.combat;
 
 import dev.cybercraft.link.Proto;
+import net.minecraft.network.protocol.game.ClientboundGameEventPacket;
 import net.minecraft.network.syncher.EntityDataAccessor;
 import net.minecraft.network.syncher.EntityDataSerializers;
 import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvent;
 import net.minecraft.world.damagesource.DamageSource;
+import net.minecraft.world.damagesource.DamageTypes;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityDimensions;
 import net.minecraft.world.entity.EntityType;
@@ -98,6 +101,11 @@ public class NpcEntity extends LivingEntity {
 		this.pendingWeapon = weaponClass(source);
 		if (source.is(net.minecraft.tags.DamageTypeTags.IS_FIRE)) {
 			this.pendingFlags |= Proto.HIT_FIRE;
+		}
+		if (source.is(DamageTypes.ARROW) && source.getEntity() instanceof ServerPlayer shooter && !source.getDirectEntity().isSilent()) {
+			// The hit "ding" vanilla only sends for arrows that hit a player (AbstractArrow.onHitEntity).
+			// Otherwise an arrow in an NPC sounds like one in a wall, and from afar not at all.
+			shooter.connection.send(new ClientboundGameEventPacket(ClientboundGameEventPacket.PLAY_ARROW_HIT_SOUND, 0.0F));
 		}
 		this.hitThisTick = true;
 		this.getCombatTracker().recordDamage(source, dmg);
@@ -196,7 +204,7 @@ public class NpcEntity extends LivingEntity {
 
 	@Override
 	protected @Nullable SoundEvent getHurtSound(DamageSource source) {
-		return null; // the stand-in is never heard: the NPC is Cyberpunk's to voice
+		return null; // the stand-in is never heard: the NPC is Cyberpunk's to voice (CyberCraftNpcHit)
 	}
 
 	@Override

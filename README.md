@@ -117,6 +117,8 @@ menu has **Mod Settings > CyberCraft**:
 - **Minecraft scale** is how many metres a Minecraft block is in Night City (0.75; 1 makes a block
   a metre and you as tall as V). Blocks, mobs, players and your view all scale with it. Blocks you
   already placed move when you change it, and friends sharing your world need the same value.
+- **Fun mode** (on by default): NPCs you hit with a sword go flying, harder with a sprint or
+  Knockback, and get back up if they live. Off, a sword only takes their health.
 
 ## Playing with friends
 
@@ -151,6 +153,7 @@ iRayBudget = 2000                   ; ray casts per frame
 fDamageToGame = 5                   ; Minecraft damage -> NPC health
 fDamageFromGame = 0.2               ; health V loses (percent) -> Minecraft damage
 fRememberSeconds = 30               ; how long a hit or targeted NPC stays in the fight
+fSwordFling = 250                   ; how far a sword hit sends an NPC flying in fun mode; 0: not at all
 
 [World]
 fMetresPerBlock = 0.75              ; how big a Minecraft block is in Night City; 1: a metre, as tall as V

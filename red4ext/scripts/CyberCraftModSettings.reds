@@ -1,7 +1,8 @@
 // CyberCraft's entry in Cyberpunk's Mod Settings (jackhumbert's Mod Settings mod): "Enable
 // CyberCraft", which turns the whole mod off and on, an "Open Minecraft settings" row that opens
-// Minecraft's options screen over the game, and "Minecraft scale", how big Minecraft's world is
-// against Night City (the plugin reads it from user.ini, Grid.cpp).
+// Minecraft's options screen over the game, "Minecraft scale", how big Minecraft's world is
+// against Night City (the plugin reads it from user.ini, Grid.cpp), and "Fun mode", NPCs flying
+// from sword hits (Combat.cpp).
 //
 // Mod Settings has no button, so the row is a Bool that never changes: clicking it, or left and
 // right on it, leaves a request in CyberCraftRequests and closes the pause menu the way its Resume
@@ -35,8 +36,8 @@ public static func CyberCraftTakeMinecraftSettingsRequest() -> Bool {
   return IsDefined(requests) && requests.TakeMinecraftSettings();
 }
 
-// The plugin reads "Enable CyberCraft" from Mod Settings' user.ini, where it saves what is accepted
-// (ModSettings.cpp): in the main menu too, and before Minecraft would be started.
+// The plugin reads "Enable CyberCraft" and "Fun mode" from Mod Settings' user.ini, where it saves
+// what is accepted (ModSettings.cpp): in the main menu too, and before Minecraft would be started.
 @if(ModuleExists("ModSettingsModule"))
 public class CyberCraftModSettings extends IScriptable {
   @runtimeProperty("ModSettings.mod", "CyberCraft")
@@ -56,6 +57,11 @@ public class CyberCraftModSettings extends IScriptable {
   @runtimeProperty("ModSettings.min", "0.4")
   @runtimeProperty("ModSettings.max", "1.0")
   public let cyberCraftMetresPerBlock: Float = 0.75;
+
+  @runtimeProperty("ModSettings.mod", "CyberCraft")
+  @runtimeProperty("ModSettings.displayName", "Fun mode")
+  @runtimeProperty("ModSettings.description", "NPCs you hit with a sword go flying along Minecraft's knockback, harder with a sprint or Knockback, and get back up if they live. Off: they only lose health.")
+  public let cyberCraftFunMode: Bool = true;
 }
 
 @if(ModuleExists("ModSettingsModule"))

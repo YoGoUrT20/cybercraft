@@ -9,7 +9,9 @@
 #include "Config.h"
 #include "Environment.h"
 #include "Game.h"
+#include "ModSettings.h"
 #include "Rtti.h"
+#include "Scripts.h"
 
 namespace cybercraft::Combat
 {
@@ -35,6 +37,7 @@ namespace cybercraft::Combat
 			float fromGame;  // Cyberpunk health percent lost -> Minecraft damage
 			float reach;     // how far the crosshair looks for a target, metres
 			float remember;  // how long an NPC stays mirrored after it was last targeted or hit, seconds
+			float fling;     // ragdoll impulse per unit of a sword's Minecraft knockback; 0: swords don't fling
 		};
 
 		const Settings& Config()
@@ -47,8 +50,9 @@ namespace cybercraft::Combat
 				s.fromGame = GetFloat(L"Combat", L"fDamageFromGame", 0.2f);
 				s.reach = GetFloat(L"Combat", L"fTargetReach", 30.0f);
 				s.remember = std::max(0.0f, GetFloat(L"Combat", L"fRememberSeconds", 30.0f));
-				logger::info("combat: MC damage x{:.2f} to Cyberpunk, Cyberpunk health percent x{:.2f} to MC, reach {:.0f} m, targets remembered {:.0f} s",
-					s.toGame, s.fromGame, s.reach, s.remember);
+				s.fling = std::max(0.0f, GetFloat(L"Combat", L"fSwordFling", 250.0f));
+				logger::info("combat: MC damage x{:.2f} to Cyberpunk, Cyberpunk health percent x{:.2f} to MC, reach {:.0f} m, targets remembered {:.0f} s, sword fling {:.0f}",
+					s.toGame, s.fromGame, s.reach, s.remember, s.fling);
 				return s;
 			}();
 			return settings;
@@ -393,6 +397,27 @@ namespace cybercraft::Combat
 			lastPlayerHealth = health;
 		}
 
+		// What the NPC does about a Minecraft hit, besides losing health (CyberCraftNpcHit): it cries
+		// out, and in fun mode (Mod Settings) a sword sends it flying along Minecraft's knockback.
+		// Minecraft's knockback of strength s throws a mob s blocks a tick away and min(s, 0.4) up
+		// (LivingEntity.knockback); the ragdoll's push has the same shape, fSwordFling per unit. At
+		// the default 250 a plain swing (0.4) pushes about as hard as V throwing a body (100), along
+		// the ground and up alike.
+		void React(const rtti::Handle<rtti::IScriptable>& a_npc, const proto::McEvent& a_event)
+		{
+			const float strength = a_event.d;
+			CpVec       impulse{};
+			if (a_event.weapon == proto::kWeaponBlade && strength > 0.0f && Config().fling > 0.0f && ModSettings::FunMode()) {
+				const float k = Config().fling;
+				impulse = McDirToCp(a_event.b * strength * k, std::min(strength, 0.4f) * k, a_event.c * strength * k);
+			}
+			const auto flung = Scripts::NpcHit(a_npc, impulse);
+			if (flung && *flung) {
+				logger::info("combat: sword knockback {:.2f} sends the NPC flying, impulse ({:.0f}, {:.0f}, {:.0f})", strength, impulse.x, impulse.y,
+					impulse.z);
+			}
+		}
+
 		void HandleEvent(const proto::McEvent& a_event)
 		{
 			auto player = rtti::Player();
@@ -406,15 +431,20 @@ namespace cybercraft::Combat
 					RED4ext::ent::EntityID id{};
 					id.hash = found->second;
 					// Still being fought (or still poisoned): it stays mirrored.
-					for (auto& npc : remembered) {
-						if (npc.entity == id.hash) {
-							npc.seen = std::chrono::steady_clock::now();
+					rtti::Handle<rtti::IScriptable> npc;
+					for (auto& known : remembered) {
+						if (known.entity == id.hash) {
+							known.seen = std::chrono::steady_clock::now();
+							npc = known.object.Lock();
 						}
 					}
 					// a is the damage Minecraft already resolved (reach, crits, cooldown, shields).
 					const float percent = a_event.a * Config().toGame;
 					ChangeHealth(id, -percent, player);
 					logger::info("combat: Minecraft hit {:#x} for {:.1f} health percent", id.hash, percent);
+					if (npc && a_event.a > 0.0f) {
+						React(npc, a_event);
+					}
 					return;
 				}
 			case proto::kEvPlayerDied:

@@ -131,6 +131,12 @@ namespace cybercraft
 		return { x, a_z, -y };
 	}
 
+	inline CpVec McDirToCp(double a_x, double a_y, double a_z)
+	{
+		const auto [x, y] = GridToCp(a_x, -a_z);
+		return { float(x), float(y), float(a_y) };
+	}
+
 	// Cyberpunk yaw (degrees, 0 = north/+Y, counter-clockwise seen from above) <-> MC yaw
 	// (degrees, 0 = south/+Z, 90 = west). Facing direction: CP (-sin y, cos y) in (x, y);
 	// MC (-sin y, cos y) in (x, z) with z = -north, so mc = 180 - cp, on the turned grid.

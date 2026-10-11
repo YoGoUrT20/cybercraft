@@ -175,4 +175,22 @@ namespace cybercraft::Scripts
 		}
 		return on;
 	}
+
+	std::optional<bool> NpcHit(const RED4ext::Handle<RED4ext::IScriptable>& a_npc, const CpVec& a_impulse)
+	{
+		static RED4ext::CBaseFunction* const fn = [] {
+			auto* found = rtti::FindGlobalFunction("CyberCraftNpcHit", { "handle:gameObject", "Vector4" }, "Bool");
+			if (!found) {
+				logger::warn("combat: CyberCraftNpcHit isn't in the scripts; NPCs Minecraft hits stay quiet and swords don't send them flying");
+			}
+			return found;
+		}();
+		auto npc = a_npc;
+		auto impulse = Point(a_impulse, 0.0f);
+		bool flung = false;
+		if (!fn || !npc || !CallStatic(fn, &flung, npc, impulse)) {
+			return std::nullopt;
+		}
+		return flung;
+	}
 }
