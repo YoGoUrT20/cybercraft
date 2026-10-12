@@ -189,6 +189,19 @@ namespace cybercraft
 		bool                                            sweeping_{ false };
 		std::chrono::steady_clock::time_point           sweptAt_{};              // when the last sweep started
 		static constexpr std::chrono::seconds           kResweepAfter{ 3 };     // standing still: sweep again after
+		// Each pillar's last finished scan, by PillarKey. A sweep skips one further than kNearBlocks
+		// from the player that was scanned over the same heights less than kFreshFor ago: walking, a
+		// sweep every few blocks used to cast every pillar's rays again, the city around unchanged.
+		struct Scanned
+		{
+			std::chrono::steady_clock::time_point at;
+			std::int32_t                          yLo, yHi;
+		};
+		std::unordered_map<std::uint64_t, Scanned>      scanned_;
+		static constexpr std::chrono::seconds           kFreshFor{ 10 };
+		static constexpr double                         kNearBlocks = 12.0;
+		double                                          updateMs_{ 0.0 };  // time in Update since the last log
+		std::uint32_t                                   updateFrames_{ 0 };
 		proto::WaterGrid                                water_{};
 		bool                                            waterDirty_{ false };
 		std::atomic<float>                              waterLevel_{ std::numeric_limits<float>::quiet_NaN() };

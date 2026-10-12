@@ -77,6 +77,8 @@ namespace cybercraft
 		mapping_ = ::CreateFileMappingW(INVALID_HANDLE_VALUE, access.lpSecurityDescriptor ? &access : nullptr, PAGE_READWRITE,
 			static_cast<DWORD>(size >> 32), static_cast<DWORD>(size & 0xFFFFFFFF), proto::kMappingName);
 		const DWORD created = ::GetLastError();
+		// Minecraft opens it as it opens the mapping; without it, it spins until the next frame as before.
+		frameEvent_ = ::CreateEventW(access.lpSecurityDescriptor ? &access : nullptr, FALSE, FALSE, proto::kFrameEventName);
 		if (access.lpSecurityDescriptor) {
 			::LocalFree(access.lpSecurityDescriptor);
 		}
@@ -147,6 +149,9 @@ namespace cybercraft
 		std::atomic_thread_fence(std::memory_order_release);
 		std::memcpy(reinterpret_cast<std::uint8_t*>(dst) + 4, reinterpret_cast<const std::uint8_t*>(&a_state) + 4, sizeof(proto::CyberState) - 4);
 		seq.store(s + 2, std::memory_order_release);
+		if (frameEvent_) {
+			::SetEvent(frameEvent_);
+		}
 	}
 
 	void Link::WriteWaterGrid(const proto::WaterGrid& a_grid)

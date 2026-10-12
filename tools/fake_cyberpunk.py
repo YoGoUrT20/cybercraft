@@ -60,6 +60,11 @@ class Link:
         self.m[OFF_ENTITIES:OFF_ENTITIES + 0x40] = bytes(0x40)
         self.m[OFF_RENDER:OFF_RENDER + 0x80] = bytes(0x80)
         struct.pack_into("<IIII", self.m, 0, MAGIC, VERSION, os.getpid(), 0)
+        # The plugin's frame event (proto::kFrameEventName): Minecraft sleeps on it between frames.
+        k32 = ctypes.windll.kernel32
+        k32.CreateEventW.restype = ctypes.c_void_p
+        k32.SetEvent.argtypes = [ctypes.c_void_p]
+        self.frame_event = k32.CreateEventW(None, False, False, NAME + "_frame")
         self.front = 2
         self.cyber_seq = 0
         self.col_head = 0
@@ -135,6 +140,10 @@ class Link:
         struct.pack_into("<IIIdddffIIIf", self.m, OFF_CYBER_STATE + 4, flags, 0x3C, epoch, pos[0], pos[1], pos[2],
                          yaw, pitch, teleport_seq, W, H, 12.0)
         struct.pack_into("<I", self.m, OFF_CYBER_STATE, self.cyber_seq * 2)
+        if self.frame_event:
+            import ctypes
+
+            ctypes.windll.kernel32.SetEvent(self.frame_event)
 
     def read_mc(self):
         raw = self.m[OFF_MC:OFF_MC + 0x68]

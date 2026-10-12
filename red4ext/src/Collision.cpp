@@ -28,6 +28,9 @@ namespace cybercraft
 			       (static_cast<std::uint64_t>(a_rz) & mask);
 		}
 
+		// A pillar of regions, all heights.
+		std::uint64_t PillarKey(std::int32_t a_rx, std::int32_t a_rz) { return RegionKey(a_rx, 0, a_rz); }
+
 		// A RegionKey field (21 bits) back to its signed coordinate.
 		std::int32_t Unpack21(std::uint64_t a_bits)
 		{
@@ -139,6 +142,7 @@ namespace cybercraft
 		sentHash_.clear();
 		sent_.clear();
 		guard_.clear();
+		scanned_.clear();
 		hits_ = 0;
 		waterLevel_.store(std::numeric_limits<float>::quiet_NaN(), std::memory_order_relaxed);
 		// kColClear drops Minecraft's car layer with the rest.
@@ -167,6 +171,12 @@ namespace cybercraft
 		if (!link.Valid() || !link.McAlive()) {
 			return;
 		}
+		// V read at the very origin (a frame right after Minecraft takes over): a sweep from there
+		// threw away the one under her, and the city had no collision for seconds.
+		if (a_playerMc.x == 0.0 && a_playerMc.y == 0.0 && a_playerMc.z == 0.0) {
+			return;
+		}
+		const auto started = std::chrono::steady_clock::now();
 		// Grid moves first: Minecraft moves the holes while it still has the city as it was.
 		while (!gridMoves_.empty()) {
 			if (!link.WriteCollision(proto::kColGridMoved, &gridMoves_.front(), sizeof(proto::ColGridMoved))) {
@@ -195,9 +205,12 @@ namespace cybercraft
 			budget -= Sample(column, budget);
 			if (column.next >= total) {
 				Flush(column);
+				scanned_[PillarKey(column.rx, column.rz)] = { std::chrono::steady_clock::now(), yMin_, yMax_ };
 				pending_.pop_back();
 			}
 		}
+		updateMs_ += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
+		++updateFrames_;
 	}
 
 	void Collision::Rebuild(const McVec& a_playerMc)
@@ -243,8 +256,20 @@ namespace cybercraft
 		const auto rxHi = FloorDiv(FloorI(a_playerMc.x + cfg.radius), kRegionSize);
 		const auto rzLo = FloorDiv(FloorI(a_playerMc.z - cfg.radius), kRegionSize);
 		const auto rzHi = FloorDiv(FloorI(a_playerMc.z + cfg.radius), kRegionSize);
+		// Pillars round the player are scanned every sweep (a door opened, something knocked over);
+		// further out, only those not scanned over these heights in the last kFreshFor.
+		std::erase_if(scanned_, [&](const auto& a_entry) { return now - a_entry.second.at >= kFreshFor; });
+		constexpr std::int32_t kHeightSlack = 2;  // blocks: the window's ends are a long way above and below
 		for (auto rx = rxLo; rx <= rxHi; ++rx) {
 			for (auto rz = rzLo; rz <= rzHi; ++rz) {
+				const auto cx = rx * kRegionSize + kRegionSize * 0.5 - a_playerMc.x;
+				const auto cz = rz * kRegionSize + kRegionSize * 0.5 - a_playerMc.z;
+				if (cx * cx + cz * cz > kNearBlocks * kNearBlocks) {
+					if (const auto fresh = scanned_.find(PillarKey(rx, rz));
+						fresh != scanned_.end() && fresh->second.yLo <= yMin_ + kHeightSlack && fresh->second.yHi >= yMax_ - kHeightSlack) {
+						continue;
+					}
+				}
 				pending_.push_back(Column{ rx, rz, 0 });
 			}
 		}
@@ -840,7 +865,9 @@ namespace cybercraft
 			SendVehicles(at, at);
 			return;
 		}
-		if (++vehicleFrame_ < cfg.vehicleFrames) {
+		// With no car round the player at the last look, every third time as often: those rays found
+		// nothing nearly all the time.
+		if (++vehicleFrame_ < (vehicleBlocks_.empty() ? cfg.vehicleFrames * 3 : cfg.vehicleFrames)) {
 			return;
 		}
 		vehicleFrame_ = 0;
@@ -919,11 +946,13 @@ namespace cybercraft
 		const auto  now = std::chrono::steady_clock::now();
 		if (cybercraft::Config::Diagnostics() && now >= nextLog) {
 			nextLog = now + std::chrono::seconds(5);
-			logger::info("collision: cars: {} scans, {} rays, {} columns of car in the last 5 s; {} blocks of car around the player now",
-				vehicleScans_, vehicleRays_, vehicleCells_, vehicleBlocks_.size());
+			logger::info("collision: cars: {} scans, {} rays, {} columns of car in the last 5 s; {} blocks of car around the player now; the city's sweep {:.2f} ms a frame",
+				vehicleScans_, vehicleRays_, vehicleCells_, vehicleBlocks_.size(), updateFrames_ ? updateMs_ / updateFrames_ : 0.0);
 			vehicleScans_ = 0;
 			vehicleRays_ = 0;
 			vehicleCells_ = 0;
+			updateMs_ = 0.0;
+			updateFrames_ = 0;
 		}
 	}
 

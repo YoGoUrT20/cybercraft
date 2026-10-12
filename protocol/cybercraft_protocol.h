@@ -20,6 +20,9 @@ namespace cybercraft::proto
 	inline constexpr wchar_t       kMappingName[] = L"Local\\CyberCraft_v1";
 	// Held by a running Minecraft with the mod (CyberLink.announceRunning: mapping name + "_minecraft").
 	inline constexpr wchar_t       kMinecraftMutexName[] = L"Local\\CyberCraft_v1_minecraft";
+	// An auto-reset event the plugin sets with every CyberState it writes (once a Cyberpunk frame):
+	// Minecraft sleeps on it until Cyberpunk's next frame instead of spinning (mapping name + "_frame").
+	inline constexpr wchar_t       kFrameEventName[] = L"Local\\CyberCraft_v1_frame";
 
 	// How many Cyberpunk metres a Minecraft block is isn't part of the layout: the plugin sets it
 	// ([World] fMetresPerBlock, Grid.cpp) and converts at its edge, so nothing here carries it.

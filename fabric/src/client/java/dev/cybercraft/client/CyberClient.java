@@ -503,6 +503,12 @@ public final class CyberClient {
 				FrameExporter.shipFinished();
 				nextShip = now + 500_000L;
 			}
+			// Asleep until Cyberpunk's frame or the next of those, rather than spinning: the spin kept
+			// a whole CPU core busy, beside Cyberpunk's own threads.
+			long until = Math.min(Math.min(deadline, tickWake), nextShip) - now;
+			if (until > 100_000L && CyberLink.waitForFrame(until)) {
+				continue;
+			}
 			Thread.onSpinWait();
 			if (deadline - now > 2_000_000L) {
 				Thread.yield();

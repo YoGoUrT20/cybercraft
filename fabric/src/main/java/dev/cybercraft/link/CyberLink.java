@@ -39,6 +39,18 @@ public final class CyberLink {
 	private static final MethodHandle CREATE_MUTEX;
 	private static MemorySegment runningMutex;
 	private static final MemorySegment QPC_OUT = Arena.global().allocate(JAVA_LONG);
+	// waitForFrame(): the plugin's frame event ("<link name>_frame") and a high-resolution timer for the
+	// time limit, waited on together.
+	private static final MethodHandle OPEN_EVENT;
+	private static final MethodHandle CREATE_WAITABLE_TIMER;
+	private static final MethodHandle SET_WAITABLE_TIMER;
+	private static final MethodHandle WAIT_FOR_MULTIPLE;
+	private static final MemorySegment WAIT_HANDLES = Arena.global().allocate(ADDRESS, 2);
+	private static final MemorySegment DUE_TIME = Arena.global().allocate(JAVA_LONG);
+	private static MemorySegment frameEvent;
+	private static MemorySegment waitTimer;
+	private static int frameEventGeneration = -1;
+	private static long nextEventTry;
 
 	static {
 		Linker linker = Linker.nativeLinker();
@@ -54,6 +66,62 @@ public final class CyberLink {
 		QUERY_PERFORMANCE_COUNTER = linker.downcallHandle(k32.find("QueryPerformanceCounter").orElseThrow(), FunctionDescriptor.of(JAVA_INT, ADDRESS));
 		QUERY_PERFORMANCE_FREQUENCY = linker.downcallHandle(k32.find("QueryPerformanceFrequency").orElseThrow(), FunctionDescriptor.of(JAVA_INT, ADDRESS));
 		CREATE_MUTEX = linker.downcallHandle(k32.find("CreateMutexW").orElseThrow(), FunctionDescriptor.of(ADDRESS, ADDRESS, JAVA_INT, ADDRESS));
+		OPEN_EVENT = linker.downcallHandle(k32.find("OpenEventW").orElseThrow(), FunctionDescriptor.of(ADDRESS, JAVA_INT, JAVA_INT, ADDRESS));
+		CREATE_WAITABLE_TIMER = linker.downcallHandle(k32.find("CreateWaitableTimerExW").orElseThrow(), FunctionDescriptor.of(ADDRESS, ADDRESS, ADDRESS, JAVA_INT, JAVA_INT));
+		SET_WAITABLE_TIMER = linker.downcallHandle(
+			k32.find("SetWaitableTimer").orElseThrow(), FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_INT, ADDRESS, ADDRESS, JAVA_INT)
+		);
+		WAIT_FOR_MULTIPLE = linker.downcallHandle(k32.find("WaitForMultipleObjects").orElseThrow(), FunctionDescriptor.of(JAVA_INT, JAVA_INT, ADDRESS, JAVA_INT, JAVA_INT));
+	}
+
+	/**
+	 * Sleeps until Cyberpunk writes its next state (the plugin sets its frame event with each one) or
+	 * {@code nanos} pass, whichever is first. False when it can't (a plugin without the event, or no
+	 * high-resolution timer on this Windows): the caller spins instead. Render thread only.
+	 */
+	public static boolean waitForFrame(long nanos) {
+		if (shm == null) {
+			return false;
+		}
+		try {
+			if (waitTimer == null) {
+				// CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS: unlike a plain timeout, it isn't
+				// rounded to Windows' 15.6 ms timer tick, which a hidden window's process can be held to.
+				waitTimer = (MemorySegment) CREATE_WAITABLE_TIMER.invokeExact(MemorySegment.NULL, MemorySegment.NULL, 0x2, 0x1F0003);
+			}
+			if (waitTimer.address() == 0) {
+				return false;
+			}
+			if (frameEventGeneration != generation) {
+				long now = System.currentTimeMillis();
+				if (now < nextEventTry) {
+					return false;
+				}
+				nextEventTry = now + 1000;
+				try (Arena arena = Arena.ofConfined()) {
+					MemorySegment name = arena.allocateFrom(MAPPING_NAME + "_frame", StandardCharsets.UTF_16LE);
+					MemorySegment event = (MemorySegment) OPEN_EVENT.invokeExact(0x00100000, 0, name); // SYNCHRONIZE
+					if (event.address() == 0) {
+						return false; // an older plugin, or a stand-in: spin as before
+					}
+					frameEvent = event;
+					frameEventGeneration = generation;
+					CyberCraft.LOG.info("CyberCraft: waiting on Cyberpunk's frame event");
+				}
+			}
+			DUE_TIME.set(JAVA_LONG, 0, -Math.max(1L, nanos / 100L)); // relative, in 100 ns units
+			if ((int) SET_WAITABLE_TIMER.invokeExact(waitTimer, DUE_TIME, 0, MemorySegment.NULL, MemorySegment.NULL, 0) == 0) {
+				return false;
+			}
+			WAIT_HANDLES.setAtIndex(ADDRESS, 0, frameEvent);
+			WAIT_HANDLES.setAtIndex(ADDRESS, 1, waitTimer);
+			int result = (int) WAIT_FOR_MULTIPLE.invokeExact(2, WAIT_HANDLES, 0, 100);
+			return result == 0 || result == 1 || result == 0x102; // the frame, the time limit, or WAIT_TIMEOUT
+		} catch (Throwable t) {
+			waitTimer = MemorySegment.NULL;
+			CyberCraft.LOG.warn("CyberCraft: can't wait for Cyberpunk's frames; spinning instead", t);
+			return false;
+		}
 	}
 
 	/**
@@ -114,6 +182,7 @@ public final class CyberLink {
 				// Cyberpunk restarted and reset the shared state; start our side over too.
 				cyberpunkPid = pid;
 				overlayBack = 1;
+				overlayLast = -1;
 				generation++;
 				CyberCraft.LOG.info("CyberCraft: Cyberpunk instance changed (pid {})", pid);
 			}

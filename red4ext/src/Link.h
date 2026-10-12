@@ -54,6 +54,7 @@ namespace cybercraft
 		T* At(std::uint64_t a_off) const { return reinterpret_cast<T*>(base_ + a_off); }
 
 		HANDLE        mapping_{ nullptr };
+		HANDLE        frameEvent_{ nullptr };  // proto::kFrameEventName, set with every CyberState
 		std::uint8_t* base_{ nullptr };
 		std::uint32_t overlayFront_{ 2 };
 	};
