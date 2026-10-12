@@ -545,7 +545,8 @@ public final class WorldExporter {
 	 */
 	private static float[] selection(Minecraft minecraft, ClientLevel level) {
 		HitResult hit = minecraft.hitResult;
-		if (!(hit instanceof BlockHitResult blockHit) || hit.getType() != HitResult.Type.BLOCK || minecraft.gui.screen() != null) {
+		// F1 hides the HUD, and Minecraft's block outline with it.
+		if (!(hit instanceof BlockHitResult blockHit) || hit.getType() != HitResult.Type.BLOCK || minecraft.gui.screen() != null || minecraft.gui.hud.isHidden()) {
 			return null;
 		}
 		BlockPos pos = blockHit.getBlockPos();

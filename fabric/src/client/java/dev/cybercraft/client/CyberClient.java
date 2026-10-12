@@ -328,9 +328,18 @@ public final class CyberClient {
 
 	private static Vec3 liftOutOfGeometry(LocalPlayer player, Vec3 pos) {
 		// Stand on the exact ground (the collision triangles) if it is slightly above the feet (up to
-		// 2.5 blocks). The plugin sends voxels only, so this finds none and leaves the feet as they are.
+		// 2.5 blocks).
 		double ground = CyberCollider.groundAt(pos.x, pos.y, pos.z, 2.5);
-		return !Double.isNaN(ground) && ground > pos.y ? new Vec3(pos.x, ground, pos.z) : pos;
+		if (!Double.isNaN(ground) && ground > pos.y) {
+			return new Vec3(pos.x, ground, pos.z);
+		}
+		// The plugin's voxels: V stands on Night City's real floor, which the voxels round up to the
+		// eighth over it, so her feet start a little inside a floor often a single eighth thick. Inside
+		// it, Minecraft's collision doesn't hold the player, who dropped through into the void under the
+		// city: up onto it (as far as a step).
+		double half = player.getBbWidth() / 2.0;
+		double top = CyberCollision.voxelTopIn(new net.minecraft.world.phys.AABB(pos.x - half, pos.y - 0.25, pos.z - half, pos.x + half, pos.y + 0.6, pos.z + half));
+		return !Double.isNaN(top) && top > pos.y ? new Vec3(pos.x, top + 0.01, pos.z) : pos;
 	}
 
 	private static void requestTeleport(Minecraft minecraft, double x, double y, double z, float yaw, float pitch) {

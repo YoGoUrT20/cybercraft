@@ -38,6 +38,11 @@ public final class DiscordPresence {
 	private static volatile @Nullable String hostLink;       // our world's e4mc link while it's open to LAN
 	private static volatile @Nullable String wantedActivity; // SET_ACTIVITY args, as the render thread last described them
 	private static long nextDescribe;
+	// Melty reads the end of latest.log for where the world is, minutes in: said once when the world
+	// opened, the line was long gone from the end by then, under the mod's own logging, and Melty never
+	// found it (no Join link for anyone). Said again every half minute while the world is open.
+	private static final long RESAY_MS = 30_000L;
+	private static long nextSay;
 
 	private DiscordPresence() {
 	}
@@ -62,6 +67,7 @@ public final class DiscordPresence {
 		if (link != null) {
 			hostLink = link;
 			CyberCraft.LOG.info("CyberCraft: this world is open to friends at {}", link);
+			nextSay = System.currentTimeMillis() + RESAY_MS;
 		}
 	}
 
@@ -84,6 +90,14 @@ public final class DiscordPresence {
 	/** Render thread, every client tick: what the status should say now. */
 	public static void tick(Minecraft minecraft) {
 		long now = System.currentTimeMillis();
+		String open = hostLink;
+		if (open != null && now >= nextSay) {
+			nextSay = now + RESAY_MS;
+			var server = minecraft.getSingleplayerServer();
+			if (server != null && server.isPublished()) {
+				CyberCraft.LOG.info("CyberCraft: this world is open to friends at {}", open);
+			}
+		}
 		if (now < nextDescribe) {
 			return;
 		}
