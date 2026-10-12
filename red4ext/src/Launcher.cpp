@@ -106,6 +106,51 @@ namespace cybercraft::Launcher
 
 		std::filesystem::path InstallDir() { return ExpandEnv(L"%LOCALAPPDATA%\\CyberCraft"); }
 
+		// Runs Windows' own tar (bsdtar, which reads zips) in a_dir, without a window; its exit code.
+		DWORD Tar(const std::wstring& a_args, const std::filesystem::path& a_dir)
+		{
+			std::wstring        command = L"\"" + ExpandEnv(L"%SystemRoot%\\System32\\tar.exe") + L"\" " + a_args;
+			STARTUPINFOW        si{ sizeof(si) };
+			PROCESS_INFORMATION pi{};
+			DWORD               code = 1;
+			if (::CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, a_dir.c_str(), &si, &pi)) {
+				::WaitForSingleObject(pi.hProcess, 5 * 60 * 1000);
+				::GetExitCodeProcess(pi.hProcess, &code);
+				::CloseHandle(pi.hThread);
+				::CloseHandle(pi.hProcess);
+			}
+			return code;
+		}
+
+		// The release a bundle came with, from its bundle-version.txt ("CyberCraft 0.2.3 (mod ...), ...").
+		std::string BundleVersion(const std::filesystem::path& a_file)
+		{
+			std::string line;
+			if (std::ifstream in{ a_file }; in) {
+				std::getline(in, line);
+			}
+			constexpr std::string_view kPrefix = "CyberCraft ";
+			if (!line.starts_with(kPrefix)) {
+				return {};
+			}
+			line.erase(0, kPrefix.size());
+			return line.substr(0, line.find(' '));
+		}
+
+		// Which release CyberCraft-Minecraft.zip next to the plugin is from. An older install can leave
+		// one there (Vortex, or Melty's releases before 0.2.3) after Melty has put this release's
+		// Minecraft in place, and unpacking it would put the old mod over the new one.
+		std::string ZipVersion()
+		{
+			const auto      check = InstallDir() / ".bundle-check";
+			std::error_code ec;
+			std::filesystem::create_directories(check, ec);
+			Tar(L"-xf \"" + Bundle().wstring() + L"\" bundle-version.txt", check);
+			auto version = BundleVersion(check / "bundle-version.txt");
+			std::filesystem::remove_all(check, ec);
+			return version;
+		}
+
 		// Unpacks the bundle to %LOCALAPPDATA%\CyberCraft (outside the game folder) the first time,
 		// and again whenever this CyberCraft brings a different one. Prism's own data there (the
 		// signed-in account, downloaded Minecraft and Java, the world) is kept; the instance and its
@@ -138,16 +183,7 @@ namespace cybercraft::Launcher
 				logger::warn("Minecraft: couldn't copy {} ({})", Narrow(bundle.wstring()), ec.message());
 				return {};
 			}
-			std::wstring        command = L"\"" + ExpandEnv(L"%SystemRoot%\\System32\\tar.exe") + L"\" -xf \"" + copy.wstring() + L"\" -C \"" + dir.wstring() + L"\"";
-			STARTUPINFOW        si{ sizeof(si) };
-			PROCESS_INFORMATION pi{};
-			DWORD               code = 1;
-			if (::CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, dir.c_str(), &si, &pi)) {
-				::WaitForSingleObject(pi.hProcess, 5 * 60 * 1000);
-				::GetExitCodeProcess(pi.hProcess, &code);
-				::CloseHandle(pi.hThread);
-				::CloseHandle(pi.hProcess);
-			}
+			const DWORD code = Tar(L"-xf \"" + copy.wstring() + L"\" -C \"" + dir.wstring() + L"\"", dir);
 			std::filesystem::remove(copy, ec);
 			if (code != 0 || !std::filesystem::exists(prism)) {
 				logger::warn("Minecraft: unpacking failed (tar exit code {})", code);
@@ -322,7 +358,14 @@ namespace cybercraft::Launcher
 			std::filesystem::path program = !chosen.empty() ? chosen : inPlace ? placed : installed;
 			if (bundled || inPlace) {
 				if (bundled) {
-					program = EnsureBundle();
+					const auto version = ZipVersion();
+					if (version == CYBERCRAFT_VERSION || !std::filesystem::exists(placed)) {
+						program = EnsureBundle();
+					} else {
+						logger::info("Minecraft: CyberCraft-Minecraft.zip next to the plugin is {}'s, not CyberCraft {}'s: left alone, using the Minecraft already in {}",
+							version.empty() ? "an old release" : "CyberCraft " + version, CYBERCRAFT_VERSION, Narrow(InstallDir().wstring()));
+						program = placed;
+					}
 				}
 				if (program.empty()) {
 					status = Status::kFailed;
