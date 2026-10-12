@@ -187,6 +187,8 @@ namespace cybercraft
 		McVec                                           origin_{ 0, 0, 0 };      // where the sweep started
 		double                                          feetY_{ 0.0 };           // where the player is now
 		bool                                            sweeping_{ false };
+		std::chrono::steady_clock::time_point           sweptAt_{};              // when the last sweep started
+		static constexpr std::chrono::seconds           kResweepAfter{ 3 };     // standing still: sweep again after
 		proto::WaterGrid                                water_{};
 		bool                                            waterDirty_{ false };
 		std::atomic<float>                              waterLevel_{ std::numeric_limits<float>::quiet_NaN() };

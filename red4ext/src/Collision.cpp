@@ -210,9 +210,14 @@ namespace cybercraft
 		// 4 blocks left it no time to finish the pillar under the player.
 		const auto  vertical = std::max(static_cast<double>(cfg.rebuildDist), std::min(cfg.up, cfg.down) / 3.0);
 		const bool  moved = (dx * dx + dz * dz) > static_cast<double>(cfg.rebuildDist) * cfg.rebuildDist || std::abs(dy) > vertical;
-		if (sweeping_ && !moved && !pending_.empty()) {
+		// A finished sweep from where the player still stands is redone every few seconds (the city
+		// streams in, doors open), not straight away: back to back, it kept the whole ray budget busy
+		// every frame for nothing.
+		const auto now = std::chrono::steady_clock::now();
+		if (sweeping_ && !moved && (!pending_.empty() || now - sweptAt_ < kResweepAfter)) {
 			return;
 		}
+		sweptAt_ = now;
 
 		ShiftWater(a_playerMc, !sweeping_);
 		origin_ = a_playerMc;

@@ -459,10 +459,12 @@ public final class CyberClient {
 			return;
 		}
 		FrameExporter.shipFinished();
-		if (state.disabled()) {
-			// Turned off in Cyberpunk: none of this is shown, so a few frames a second will do.
+		if (state.disabled() || !state.inGame() || state.menuOpen()) {
+			// Turned off in Cyberpunk, or behind its menus and loading screens: none of this is shown
+			// (the plugin draws nothing there), so a few frames a second will do, not Cyberpunk's
+			// uncapped menu frame rate.
 			try {
-				Thread.sleep(100);
+				Thread.sleep(state.disabled() ? 100 : 33);
 			} catch (InterruptedException e) {
 				Thread.currentThread().interrupt();
 			}

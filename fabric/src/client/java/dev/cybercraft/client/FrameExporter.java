@@ -28,6 +28,12 @@ public final class FrameExporter {
 	private static final Staging[] staging = new Staging[STAGING];
 	private static long nextFrameId = 1;
 	private static boolean loggedFormat;
+	// The last frame shipped: one with the same pixels isn't shipped again (the plugin keeps drawing the
+	// last, and copying ~15 MB a frame cost Cyberpunk's render thread for nothing), but once a second
+	// anyway, so a plugin that lost its copy (a resize) gets one.
+	private static final long RESHIP_NANOS = 1_000_000_000L;
+	private static int shippedWidth, shippedHeight;
+	private static long shippedNanos;
 
 	private static final class Staging {
 		GpuBuffer buffer;
@@ -126,12 +132,24 @@ public final class FrameExporter {
 		MemorySegment shm = CyberLink.segment();
 		if (shm != null) {
 			long bytes = (long) newest.width * newest.height * 4L;
+			long now = System.nanoTime();
+			boolean ship;
 			try (GpuBufferSlice.MappedView view = newest.buffer.map(true, false)) {
 				MemorySegment src = MemorySegment.ofBuffer(view.data());
-				MemorySegment.copy(src, 0, shm, CyberLink.overlayBackSlotOffset(), Math.min(bytes, src.byteSize()));
+				long n = Math.min(bytes, src.byteSize());
+				ship = newest.width != shippedWidth || newest.height != shippedHeight || now - shippedNanos >= RESHIP_NANOS
+					|| !CyberLink.overlayUnchanged(src, n);
+				if (ship) {
+					MemorySegment.copy(src, 0, shm, CyberLink.overlayBackSlotOffset(), n);
+				}
 			}
-			CyberLink.publishOverlay(newest.width, newest.height, true, newest.frameId);
-			FrameStats.shipped(System.nanoTime() - newest.capturedNanos);
+			if (ship) {
+				CyberLink.publishOverlay(newest.width, newest.height, true, newest.frameId);
+				shippedWidth = newest.width;
+				shippedHeight = newest.height;
+				shippedNanos = now;
+				FrameStats.shipped(now - newest.capturedNanos);
+			}
 		}
 		// Anything older than what we just shipped is useless now.
 		for (Staging s : staging) {

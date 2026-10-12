@@ -648,10 +648,21 @@ public final class CyberLink {
 	// ---- overlay (publish) -----------------------------------------------------------------
 
 	private static int overlayBack = 1; // writer's private slot; the plugin's front starts at 2, middle at 0
+	private static int overlayLast = -1; // the slot published last: the middle or the plugin's front, untouched until the next publish
 
 	/** Returns the byte offset where the next overlay frame should be written. */
 	public static long overlayBackSlotOffset() {
 		return OFF_OVERLAY_PIXELS + overlayBack * OVERLAY_SLOT_BYTES;
+	}
+
+	/** True when the last published overlay frame has these pixels already (only the reader reads it). */
+	public static boolean overlayUnchanged(MemorySegment pixels, long bytes) {
+		MemorySegment s = shm;
+		if (s == null || overlayLast < 0) {
+			return false;
+		}
+		long at = OFF_OVERLAY_PIXELS + overlayLast * OVERLAY_SLOT_BYTES;
+		return MemorySegment.mismatch(pixels, 0, bytes, s, at, at + bytes) == -1;
 	}
 
 	/** Publishes the frame just written into the back slot. */
@@ -666,6 +677,7 @@ public final class CyberLink {
 		s.set(JAVA_INT, hdr + SH_FLAGS, bottomUp ? 1 : 0);
 		s.set(JAVA_LONG, hdr + SH_FRAME_ID, frameId);
 		int old = (int) INT.getAndSet(s, OFF_OVERLAY_CTL + OC_STATE, overlayBack | OVERLAY_DIRTY);
+		overlayLast = overlayBack;
 		overlayBack = old & 3;
 		LONG.getAndAdd(s, OFF_OVERLAY_CTL + OC_FRAMES_PUBLISHED, 1L);
 	}
