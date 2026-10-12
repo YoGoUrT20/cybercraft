@@ -337,6 +337,7 @@ namespace cybercraft::proto
 		kWeBlock = 4,    // dropped block item: a spinning cube of side `scale`, uv[0..2] = side, top, bottom
 		kWeCrack = 5,    // block-breaking cracks over the box at (x, y, z) of size ext, uv[0] = crack stage
 		kWeShadow = 6,   // a player's or mob's feet at (x, y, z), `scale` wide: its soft contact shadow
+		kWeEdge = 7,     // one edge of the targeted block's outline: from (x, y, z) along ext, uv[0] an opaque spot
 	};
 
 	struct WorldEntity
@@ -418,7 +419,10 @@ namespace cybercraft::proto
 		std::int32_t  sx, sy, sz;  // section coords, as in RenSection
 		std::uint32_t count;       // dug blocks (0: none, and no bitset follows)
 		std::uint32_t worldId;     // the world (CyberState::worldId) the bits belong to
-		std::uint32_t pad;
+		// After the bitset, this many uint16: a dug block (its bit) | how much of it stays << 12, in
+		// eighths from its bottom (1..8): the floor something standing free stood on, whose top was in
+		// the block. Only what's over that is cut out of the picture.
+		std::uint32_t floors;
 	};
 	static_assert(sizeof(RenDug) == 24);
 
@@ -561,7 +565,8 @@ namespace cybercraft::proto
 		                        // bits 4-6: face normal as MC Direction ordinal + 1 (0 = none: lit without a normal;
 		                        // 7 = the normal in bits 8-31 as signed bytes x, y, z, for models and items),
 		                        // bit8 (with a normal 1-6): a dug hole's backdrop, drawn behind everything and only
-		                        // where the game's picture is cut, from that picture round the hole
+		                        // where the game's picture is cut, from that picture round the hole,
+		                        // bit9 (with a normal 1-6): the End's portal or a gateway: stars, not a texture
 	};
 	static_assert(sizeof(RenVertex) == 32);
 

@@ -41,6 +41,13 @@ public final class CyberCollision {
 	private static final int FILL_TOP_SHIFT = 12; // highest occupied of the 8 voxel layers (3 bits)
 	private static final int FILL_LAYERS_SHIFT = 15; // how many of the 8 layers have any (4 bits)
 	private static final int FILL_BOTTOM_SHIFT = 19; // lowest occupied of the 8 voxel layers (3 bits)
+	// The slab layers: those at least three quarters covered. A floor's are (however thick it is); a
+	// wall's sheet, or a post or a railing standing on a floor, has none (a few columns), so a pavement
+	// with railings on it is still a floor.
+	private static final int FILL_SLABS_SHIFT = 22; // how many (4 bits)
+	private static final int FILL_SLAB_TOP_SHIFT = 26; // the highest (3 bits)
+	private static final int FILL_SLAB_BOTTOM_SHIFT = 29; // the lowest (3 bits)
+	private static final int SLAB_COLUMNS = 48; // of a layer's 64
 	private static final ConcurrentHashMap<Long, CyberTri[]> TRIS = new ConcurrentHashMap<>();
 	// Diggable surfaces as they were before blocks were dug out of them (Proto.TRI_GHOST).
 	private static final ConcurrentHashMap<Long, CyberTri[]> GHOSTS = new ConcurrentHashMap<>();
@@ -72,7 +79,19 @@ public final class CyberCollision {
 			return null;
 		}
 		long key = pos.asLong();
-		return CyberDig.dugHere(key) ? null : SHAPES.get(key);
+		if (CyberDig.dugHere(key)) {
+			// Dug: only the floor something standing free stood on, if its top was in the cell.
+			int kept = CyberDig.keptFloor(pos.getX(), pos.getY(), pos.getZ());
+			return kept > 0 ? KEPT_FLOORS[Math.min(kept, 8)] : null;
+		}
+		return SHAPES.get(key);
+	}
+
+	private static final VoxelShape[] KEPT_FLOORS = new VoxelShape[9];
+	static {
+		for (int i = 1; i <= 8; i++) {
+			KEPT_FLOORS[i] = net.minecraft.world.phys.shapes.Shapes.box(0.0, 0.0, 0.0, 1.0, i / 8.0, 1.0);
+		}
 	}
 
 	/** The city's fill info for a block, null where there's none or it was dug out. */
@@ -272,12 +291,26 @@ public final class CyberCollision {
 	}
 
 	/**
-	 * True if the city's collision in this cell is a floor: a slab a few layers thin (the ground,
-	 * a pavement, a roof), not a wall's sheet running up through it.
+	 * True if the city's collision in this cell is a floor: a slab over most of it (the ground, a
+	 * pavement, a roof, however thick: the plugin sends a solid's shell, not just its top), not a
+	 * wall's sheet running up through it. What stands on it (posts, a railing's legs: a few columns)
+	 * doesn't count.
 	 */
 	public static boolean rawFloor(int x, int y, int z) {
 		Integer fill = FILL.isEmpty() ? null : FILL.get(BlockPos.asLong(x, y, z));
-		return fill != null && ((fill >> FILL_LAYERS_SHIFT) & 15) <= 3;
+		return fill != null && ((fill >> FILL_SLABS_SHIFT) & 15) >= 1;
+	}
+
+	/** How high (0..1) a floor's slab reaches in this cell (rawFloor), what stands on it left out; 0 for none. */
+	public static float rawFloorTop(int x, int y, int z) {
+		Integer fill = FILL.isEmpty() ? null : FILL.get(BlockPos.asLong(x, y, z));
+		return fill == null || ((fill >> FILL_SLABS_SHIFT) & 15) == 0 ? 0.0F : (((fill >>> FILL_SLAB_TOP_SHIFT) & 7) + 1) / 8.0F;
+	}
+
+	/** How high (0..1) the bottom of a floor's slab sits in this cell (rawFloor), 0 for none. */
+	public static float rawFloorBottom(int x, int y, int z) {
+		Integer fill = FILL.isEmpty() ? null : FILL.get(BlockPos.asLong(x, y, z));
+		return fill == null ? 0.0F : ((fill >>> FILL_SLAB_BOTTOM_SHIFT) & 7) / 8.0F;
 	}
 
 	public static int blockCount() {
@@ -538,9 +571,13 @@ public final class CyberCollision {
 		int top = 0;
 		int bottom = -1;
 		int layers = 0;
+		int slabs = 0;
+		int slabTop = 0;
+		int slabBottom = -1;
 		for (int y = 0; y < 8; y++) {
 			long layer = s.get(JAVA_LONG, bitsOff + y * 8L);
-			count += Long.bitCount(layer);
+			int columns = Long.bitCount(layer);
+			count += columns;
 			if (layer != 0) {
 				info |= y < 4 ? FILL_LOWER : FILL_UPPER;
 				top = y;
@@ -549,8 +586,16 @@ public final class CyberCollision {
 				}
 				layers++;
 			}
+			if (columns >= SLAB_COLUMNS) {
+				slabs++;
+				slabTop = y;
+				if (slabBottom < 0) {
+					slabBottom = y;
+				}
+			}
 		}
-		return info | count | top << FILL_TOP_SHIFT | layers << FILL_LAYERS_SHIFT | Math.max(bottom, 0) << FILL_BOTTOM_SHIFT;
+		return info | count | top << FILL_TOP_SHIFT | layers << FILL_LAYERS_SHIFT | Math.max(bottom, 0) << FILL_BOTTOM_SHIFT | slabs << FILL_SLABS_SHIFT
+			| slabTop << FILL_SLAB_TOP_SHIFT | Math.max(slabBottom, 0) << FILL_SLAB_BOTTOM_SHIFT;
 	}
 
 	private static @Nullable VoxelShape buildShape(MemorySegment s, long bitsOff) {

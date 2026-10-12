@@ -4,6 +4,7 @@
 
 #include <RED4ext/Scripting/Natives/physicsTraceResult.hpp>
 
+#include "Builds.h"
 #include "Config.h"
 #include "Rtti.h"
 
@@ -12,6 +13,14 @@ namespace cybercraft
 	namespace
 	{
 		constexpr double kEps = 1.0e-4;
+		constexpr double kCell = 1.0 / Collision::kCellsPerBlock;  // an octree cell's edge, blocks
+		// Octree boxes are lifted this far (blocks) along every axis: a surface exactly on the line
+		// between two cells is the lower one's. Floors are often exactly on a block boundary (the grid
+		// is aligned to the ground under V), and a box of exactly a cell's size would put them in both
+		// cells, or one inset a little in neither.
+		constexpr double kPad = 0.002;
+		// A ray whose hit is closer than this to where it started (blocks) started inside a solid.
+		constexpr double kInsideBlocks = 0.002;
 
 		std::int32_t FloorDiv(std::int32_t a_value, std::int32_t a_divisor)
 		{
@@ -28,8 +37,6 @@ namespace cybercraft
 			       (static_cast<std::uint64_t>(a_rz) & mask);
 		}
 
-		// A pillar of regions, all heights.
-		std::uint64_t PillarKey(std::int32_t a_rx, std::int32_t a_rz) { return RegionKey(a_rx, 0, a_rz); }
 
 		// A RegionKey field (21 bits) back to its signed coordinate.
 		std::int32_t Unpack21(std::uint64_t a_bits)
@@ -42,13 +49,14 @@ namespace cybercraft
 			return RegionKey(a_bx, a_by, a_bz);  // same packing, a block per unit
 		}
 
-		// Where a down ray that started inside a solid tries next, further each time it's still inside.
-		constexpr std::array<double, 4> kInsideSteps{ 0.125, 0.25, 0.5, 1.0 };
-		// How many of those a column may take on top of its surfaces (the whole 48-block window a block
-		// at a time), and how deep one solid may go before the column gives up on it: one that thick is
-		// the ground or a building's bulk, with nothing to stand on inside or under it in the window.
-		constexpr int    kMaxInsideSteps = 48;
-		constexpr double kMaxInsideDepth = 8.0;
+		std::uint64_t CellKey(std::int32_t a_x, std::int32_t a_y, std::int32_t a_z)
+		{
+			return RegionKey(a_x, a_y, a_z);  // same packing, a cell per unit
+		}
+
+		double Axis(const McVec& a_v, int a_axis) { return a_axis == 0 ? a_v.x : a_axis == 1 ? a_v.y : a_v.z; }
+		double Axis(const RED4ext::Vector4& a_v, int a_axis) { return a_axis == 0 ? a_v.X : a_axis == 1 ? a_v.Y : a_v.Z; }
+		void   SetAxis(McVec& a_v, int a_axis, double a_value) { (a_axis == 0 ? a_v.x : a_axis == 1 ? a_v.y : a_v.z) = a_value; }
 
 		std::string Ascii(const std::wstring& a_wide)
 		{
@@ -90,6 +98,22 @@ namespace cybercraft
 			std::string_view view(name);
 			return view.find("water") != std::string_view::npos || view.find("liquid") != std::string_view::npos;
 		}
+
+		const char* MaterialName(RED4ext::CName a_material)
+		{
+			const auto* name = a_material.ToString();
+			return name ? name : "?";
+		}
+
+		// The colliders Builds gives the player's own blocks are World Static too, and every query would
+		// find them: Minecraft would get its own blocks back as Night City's collision (still there after
+		// the block is broken), and the city would hide the blocks' own faces. They're the only thing
+		// made of this (scripts/CyberCraft.reds).
+		const RED4ext::CName& OwnMaterial()
+		{
+			static const RED4ext::CName own("character_vr.physmat");
+			return own;
+		}
 	}
 
 	Collision& Collision::Get()
@@ -104,17 +128,16 @@ namespace cybercraft
 			using namespace cybercraft::Config;
 			Settings s{};
 			s.enable = GetBool(L"Collision", L"bEnable", true);
+			// Everything V couldn't walk through was in PlayerBlocker when probed (/cityprobe): static
+			// walls and signs, railings and doors (moving bodies), road barriers (Destructible).
+			s.solidGroups = Ascii(GetString(L"Collision", L"sSolidGroups", L"Static,Terrain,Destructible,PlayerBlocker"));
 			s.group = Ascii(GetString(L"Collision", L"sGroup", L"Static,Terrain"));
 			s.radius = GetFloat(L"Collision", L"fRadius", 32.0f);
 			s.up = GetFloat(L"Collision", L"fUp", 24.0f);
 			s.down = GetFloat(L"Collision", L"fDown", 24.0f);
 			s.samplesPerBlock = std::clamp(static_cast<int>(GetFloat(L"Collision", L"iSamplesPerBlock", 2.0f)), 1, 8);
-			s.rayBudget = std::max(static_cast<int>(GetFloat(L"Collision", L"iRayBudget", 2000.0f)), 1);
-			// 6 used to be the default: in a building, or under balconies, signs and overpasses, a
-			// column ran out on what was above V and never reached the floor she stood on.
-			s.maxHitsPerColumn = std::clamp(static_cast<int>(GetFloat(L"Collision", L"iMaxHitsPerColumn", 16.0f)), 1, 64);
-			s.steepNormalY = GetFloat(L"Collision", L"fSteepNormalY", 0.64f);
-			s.wallHeight = GetFloat(L"Collision", L"fWallHeight", 2.5f);
+			s.queryBudget = std::max(static_cast<int>(GetFloat(L"Collision", L"iQueryBudget", 2000.0f)), 1);
+			s.budgetMs = std::clamp(GetFloat(L"Collision", L"fBudgetMs", 3.0f), 0.25f, 50.0f);
 			s.rebuildDist = GetFloat(L"Collision", L"fRebuildDist", 4.0f);
 			s.guard = GetBool(L"Collision", L"bGuard", true);
 			s.guardDepth = std::clamp(GetFloat(L"Collision", L"fGuardDepth", 8.0f), 1.0f, 24.0f);
@@ -122,8 +145,8 @@ namespace cybercraft
 			s.vehicleGroup = Ascii(GetString(L"Collision", L"sVehicleGroup", L"Vehicle"));
 			s.vehicleRadius = std::clamp(GetFloat(L"Collision", L"fVehicleRadius", 6.0f), 1.0f, 16.0f);
 			s.vehicleFrames = std::max(static_cast<int>(GetFloat(L"Collision", L"iVehicleFrames", 2.0f)), 1);
-			logger::info("collision: {} group \"{}\" radius {:.0f} window -{:.0f}/+{:.0f} samples {}/block budget {} rays/frame, {} surfaces per column",
-				s.enable ? "on" : "off", s.group, s.radius, s.down, s.up, s.samplesPerBlock, s.rayBudget, s.maxHitsPerColumn);
+			logger::info("collision: {}, solid is \"{}\" (any body), radius {:.0f} window -{:.0f}/+{:.0f}, {} queries and {:.1f} ms a frame at most",
+				s.enable ? "on" : "off", s.solidGroups, s.radius, s.down, s.up, s.queryBudget, s.budgetMs);
 			logger::info("collision: guard {} (the ground down to {:.0f} blocks under the player, every frame)", s.guard ? "on" : "off", s.guardDepth);
 			logger::info("collision: cars {} (group \"{}\", {:.0f} blocks round the player, every {} frames)", s.vehicles ? "on" : "off",
 				s.vehicleGroup, s.vehicleRadius, s.vehicleFrames);
@@ -138,12 +161,21 @@ namespace cybercraft
 		cleared_ = false;
 		sweeping_ = false;
 		pending_.clear();
+		phase_ = Phase::kStart;
+		stack_.clear();
+		cells_.clear();
+		cellList_.clear();
+		outside_.clear();
+		movingCells_.clear();
+		movingFound_.clear();
+		moving_.clear();
 		regions_.clear();
 		sentHash_.clear();
 		sent_.clear();
 		guard_.clear();
 		scanned_.clear();
 		hits_ = 0;
+		waterSampled_.fill(false);
 		waterLevel_.store(std::numeric_limits<float>::quiet_NaN(), std::memory_order_relaxed);
 		// kColClear drops Minecraft's car layer with the rest.
 		vehicleBlocks_.clear();
@@ -153,12 +185,6 @@ namespace cybercraft
 	void Collision::SendGridMoved(const proto::ColGridMoved& a_move)
 	{
 		gridMoves_.push_back(a_move);
-	}
-
-	int Collision::Samples() const
-	{
-		const auto edge = kRegionSize * Config().samplesPerBlock;
-		return edge * edge;
 	}
 
 	void Collision::Update(const McVec& a_playerMc)
@@ -191,23 +217,48 @@ namespace cybercraft
 			cleared_ = true;
 		}
 
-		feetY_ = a_playerMc.y;
+		spatial_ = rtti::System("gameSpatialQueriesSystem");
+		if (!spatial_) {
+			return;
+		}
+		// Where the player is heading, for what to scan first: smoothed over about a quarter second,
+		// and nothing from a jump (a teleport, the grid moving).
+		if (const double dt = std::chrono::duration<double>(started - movedAt_).count(); dt > 0.0 && dt < 0.5) {
+			const McVec  step{ (a_playerMc.x - player_.x) / dt, (a_playerMc.y - player_.y) / dt, (a_playerMc.z - player_.z) / dt };
+			const double k = std::min(1.0, dt / 0.25);
+			if (step.x * step.x + step.y * step.y + step.z * step.z < 60.0 * 60.0) {
+				velocity_ = { velocity_.x + (step.x - velocity_.x) * k, velocity_.y + (step.y - velocity_.y) * k, velocity_.z + (step.z - velocity_.z) * k };
+			}
+		} else {
+			velocity_ = { 0.0, 0.0, 0.0 };
+		}
+		movedAt_ = started;
+		player_ = a_playerMc;
+		if (!Calibrate(a_playerMc)) {
+			return;
+		}
 		Rebuild(a_playerMc);
 		Guard(a_playerMc);
 
 		PublishWater();
 		waterLevel_.store(NearestWater(a_playerMc), std::memory_order_relaxed);
 
-		const auto total = Samples();
-		auto       budget = cfg.rayBudget;
-		while (budget > 0 && !pending_.empty()) {
-			auto& column = pending_.back();
-			budget -= Sample(column, budget);
-			if (column.next >= total) {
-				Flush(column);
-				scanned_[PillarKey(column.rx, column.rz)] = { std::chrono::steady_clock::now(), yMin_, yMax_ };
-				pending_.pop_back();
+		// Regions scanned not long ago again (rescans: all that's left once the new ones are in) get
+		// a third of the time: standing still, they're what the sweep does all day.
+		auto       budget = cfg.queryBudget;
+		const auto ms = [](double a_ms) { return std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double, std::milli>(a_ms)); };
+		Watch(budget, started + ms(cfg.budgetMs));
+		SampleWater(budget, started + ms(cfg.budgetMs));
+		while (!pending_.empty()) {
+			const auto deadline = started + ms(pending_.back().rescan ? cfg.budgetMs / 3.0 : cfg.budgetMs);
+			if (std::chrono::steady_clock::now() >= deadline || !Advance(budget, deadline)) {
+				break;
 			}
+			const auto& job = pending_.back();
+			Flush(job);
+			scanned_[RegionKey(job.rx, job.ry, job.rz)] = { std::chrono::steady_clock::now(), job.coarse };
+			pending_.pop_back();
+			++sweepRegions_;
 		}
 		updateMs_ += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
 		++updateFrames_;
@@ -224,7 +275,7 @@ namespace cybercraft
 		const auto  vertical = std::max(static_cast<double>(cfg.rebuildDist), std::min(cfg.up, cfg.down) / 3.0);
 		const bool  moved = (dx * dx + dz * dz) > static_cast<double>(cfg.rebuildDist) * cfg.rebuildDist || std::abs(dy) > vertical;
 		// A finished sweep from where the player still stands is redone every few seconds (the city
-		// streams in, doors open), not straight away: back to back, it kept the whole ray budget busy
+		// streams in, doors open), not straight away: back to back, it kept the whole budget busy
 		// every frame for nothing.
 		const auto now = std::chrono::steady_clock::now();
 		if (sweeping_ && !moved && (!pending_.empty() || now - sweptAt_ < kResweepAfter)) {
@@ -247,225 +298,749 @@ namespace cybercraft
 		};
 		std::erase_if(sent_, distant);
 		std::erase_if(guard_, distant);
-		regions_.clear();  // anything half-scanned is dropped rather than sent
+		std::erase_if(moving_, distant);
+		// The region in progress carries on if it's still wanted: started over every few blocks, none
+		// round a moving player was ever finished.
+		std::optional<Job> current;
+		if (!pending_.empty() && phase_ != Phase::kStart) {
+			current = pending_.back();
+		}
 		pending_.clear();
 		yMin_ = FloorI(a_playerMc.y - cfg.down);
 		yMax_ = FloorI(a_playerMc.y + cfg.up);
 
 		const auto rxLo = FloorDiv(FloorI(a_playerMc.x - cfg.radius), kRegionSize);
 		const auto rxHi = FloorDiv(FloorI(a_playerMc.x + cfg.radius), kRegionSize);
+		const auto ryLo = FloorDiv(yMin_, kRegionSize);
+		const auto ryHi = FloorDiv(yMax_, kRegionSize);
 		const auto rzLo = FloorDiv(FloorI(a_playerMc.z - cfg.radius), kRegionSize);
 		const auto rzHi = FloorDiv(FloorI(a_playerMc.z + cfg.radius), kRegionSize);
-		// Pillars round the player are scanned every sweep (a door opened, something knocked over);
-		// further out, only those not scanned over these heights in the last kFreshFor.
+		// A region is scanned again after kResweepAfter round the player (a door opened, something
+		// knocked over), kFreshFor further out; until then it's what the city still is.
 		std::erase_if(scanned_, [&](const auto& a_entry) { return now - a_entry.second.at >= kFreshFor; });
-		constexpr std::int32_t kHeightSlack = 2;  // blocks: the window's ends are a long way above and below
+		const auto distanceSq = [](const Job& a_job, const McVec& a_from) {
+			const auto cx = a_job.rx * kRegionSize + kRegionSize * 0.5 - a_from.x;
+			const auto cy = a_job.ry * kRegionSize + kRegionSize * 0.5 - a_from.y;
+			const auto cz = a_job.rz * kRegionSize + kRegionSize * 0.5 - a_from.z;
+			return cx * cx + cy * cy + cz * cz;
+		};
 		for (auto rx = rxLo; rx <= rxHi; ++rx) {
-			for (auto rz = rzLo; rz <= rzHi; ++rz) {
-				const auto cx = rx * kRegionSize + kRegionSize * 0.5 - a_playerMc.x;
-				const auto cz = rz * kRegionSize + kRegionSize * 0.5 - a_playerMc.z;
-				if (cx * cx + cz * cz > kNearBlocks * kNearBlocks) {
-					if (const auto fresh = scanned_.find(PillarKey(rx, rz));
-						fresh != scanned_.end() && fresh->second.yLo <= yMin_ + kHeightSlack && fresh->second.yHi >= yMax_ - kHeightSlack) {
-						continue;
+			for (auto ry = ryLo; ry <= ryHi; ++ry) {
+				for (auto rz = rzLo; rz <= rzHi; ++rz) {
+					Job        job{ rx, ry, rz, false, false };
+					const auto here = distanceSq(job, a_playerMc);
+					job.coarse = here > kFineBlocks * kFineBlocks;
+					const auto last = scanned_.find(RegionKey(rx, ry, rz));
+					if (last != scanned_.end()) {
+						if (last->second.coarse && !job.coarse) {
+							pending_.push_back(job);  // close now: its quarter-block cells, as a new one
+							continue;
+						}
+						if (here > kNearBlocks * kNearBlocks || now - last->second.at < kResweepAfter) {
+							continue;
+						}
+						job.rescan = true;
 					}
+					pending_.push_back(job);
 				}
-				pending_.push_back(Column{ rx, rz, 0 });
 			}
 		}
-		// Nearest pillar last: the scan pops from the back, so the ground under the player
-		// reaches Minecraft first.
-		const auto distanceSq = [&](const Column& a_column) {
-			const auto cx = (a_column.rx * kRegionSize) + kRegionSize * 0.5 - a_playerMc.x;
-			const auto cz = (a_column.rz * kRegionSize) + kRegionSize * 0.5 - a_playerMc.z;
-			return cx * cx + cz * cz;
-		};
-		std::sort(pending_.begin(), pending_.end(), [&](const Column& a_lhs, const Column& a_rhs) {
-			return distanceSq(a_lhs) > distanceSq(a_rhs);
+		// New regions before rescans, each nearest first to where the player will be in half a second;
+		// the scan pops from the back.
+		const McVec ahead{ a_playerMc.x + velocity_.x * 0.5, a_playerMc.y + velocity_.y * 0.5, a_playerMc.z + velocity_.z * 0.5 };
+		std::sort(pending_.begin(), pending_.end(), [&](const Job& a_lhs, const Job& a_rhs) {
+			if (a_lhs.rescan != a_rhs.rescan) {
+				return a_lhs.rescan;
+			}
+			return distanceSq(a_lhs, ahead) > distanceSq(a_rhs, ahead);
 		});
-		if (cybercraft::Config::Diagnostics()) {
-			logger::info("collision: sweep from ({:.1f}, {:.1f}, {:.1f}), {} pillars, y {}..{} (since last: {} rays, {} hits, {} through CyberCraft's colliders, "
-						 "{} started inside a solid, {} columns out of surfaces, {} regions the guard filled in under the player, {} water surfaces)",
-				a_playerMc.x, a_playerMc.y, a_playerMc.z, pending_.size(), yMin_, yMax_, sweepRays_, sweepHits_, sweepOwn_, sweepInside_, sweepCapped_,
-				guardFills_, waterHits_);
+		std::size_t coarseJobs = 0;
+		for (const auto& job : pending_) {
+			coarseJobs += job.coarse ? 1 : 0;
 		}
+		auto kept = pending_.end();
+		if (current) {
+			kept = std::find_if(pending_.begin(), pending_.end(), [&](const Job& a_job) {
+				return a_job.rx == current->rx && a_job.ry == current->ry && a_job.rz == current->rz && a_job.coarse == current->coarse;
+			});
+		}
+		if (kept != pending_.end()) {
+			const auto job = *kept;
+			pending_.erase(kept);
+			pending_.push_back(job);
+		} else {
+			phase_ = Phase::kStart;
+			regions_.clear();  // anything half-scanned is dropped rather than sent
+		}
+		if (cybercraft::Config::Diagnostics()) {
+			// The materials the solid cells were of, most first.
+			std::vector<std::pair<std::uint32_t, std::uint64_t>> materials;
+			for (const auto& [hash, count] : sweepMaterials_) {
+				materials.emplace_back(count, hash);
+			}
+			std::sort(materials.begin(), materials.end(), std::greater<>());
+			std::string kinds;
+			for (std::size_t i = 0; i < materials.size() && i < 6; ++i) {
+				kinds += std::format("{}{} {}", i ? ", " : "", MaterialName(RED4ext::CName(materials[i].second)), materials[i].first);
+			}
+			logger::info("collision: sweep from ({:.1f}, {:.1f}, {:.1f}) heading ({:.1f}, {:.1f}, {:.1f}) blocks/s, {} regions to scan ({} again, {} far ones coarsely), y {}..{} (since last: {} regions scanned, {} box queries, {} found something; {} solid cells{}; "
+						 "{} rays, {} trimmed a cell; {} boxes deep inside a solid filled whole; {} cells of moving bodies, {} asked again, {} regions changed by them; {} cells of cars left to the car layer; {} guard rays; {} through CyberCraft's colliders, {} boxes of placed blocks skipped, "
+						 "{} sub-voxels inside Minecraft's player left out; {} regions the guard filled in under the player, {} water surfaces)",
+				a_playerMc.x, a_playerMc.y, a_playerMc.z, velocity_.x, velocity_.y, velocity_.z, pending_.size(),
+				std::count_if(pending_.begin(), pending_.end(), [](const Job& a_job) { return a_job.rescan; }), coarseJobs, yMin_, yMax_, sweepRegions_, sweepBoxes_,
+				sweepBoxHits_, sweepCells_,
+				kinds.empty() ? std::string{} : " (" + kinds + ")", sweepRays_, sweepTrims_, sweepInterior_, sweepMoving_, watchQueries_, watchChanges_, sweepCars_, guardRays_, sweepOwn_, sweepBuilt_, sweepBody_, guardFills_,
+				waterHits_);
+		}
+		sweepRegions_ = 0;
+		sweepBoxes_ = 0;
+		sweepBoxHits_ = 0;
+		sweepCells_ = 0;
 		sweepRays_ = 0;
-		sweepHits_ = 0;
+		sweepTrims_ = 0;
+		sweepInterior_ = 0;
+		sweepMoving_ = 0;
+		sweepCars_ = 0;
+		watchQueries_ = 0;
+		watchChanges_ = 0;
 		sweepOwn_ = 0;
-		sweepInside_ = 0;
-		sweepCapped_ = 0;
+		sweepBuilt_ = 0;
+		sweepBody_ = 0;
+		guardRays_ = 0;
 		guardFills_ = 0;
 		waterHits_ = 0;
+		sweepMaterials_.clear();
 	}
 
-	int Collision::Sample(Column& a_column, int a_budget)
+	bool Collision::Advance(int& a_budget, std::chrono::steady_clock::time_point a_deadline)
 	{
-		const auto spb = Config().samplesPerBlock;
-		const auto edge = kRegionSize * spb;
-		const auto step = 1.0 / spb;
-		const auto total = edge * edge;
-
-		// A column once started is finished, past the budget if need be: the one the budget ran out
-		// in used to be left with only its first few surfaces, often not down to the floor.
-		int rays = 0;
-		while (a_column.next < total && rays < a_budget) {
-			const auto index = a_column.next++;
-			rays += ScanColumn(a_column.rx * kRegionSize + (index % edge + 0.5) * step, a_column.rz * kRegionSize + (index / edge + 0.5) * step);
+		const auto&    job = pending_.back();
+		constexpr auto kEdge = kRegionSize * kCellsPerBlock;  // a region, in cells
+		const auto     spent = [&] { return a_budget <= 0 || std::chrono::steady_clock::now() >= a_deadline; };
+		if (phase_ == Phase::kStart) {
+			stack_.clear();
+			cells_.clear();
+			cellList_.clear();
+			outside_.clear();
+			movingCells_.clear();
+			movingFound_.clear();
+			regions_.clear();
+			nextCell_ = 0;
+			known_ = { job.rx * kEdge, job.ry * kEdge, job.rz * kEdge, (job.rx + 1) * kEdge, (job.ry + 1) * kEdge, (job.rz + 1) * kEdge };
+			Node root{ job.rx * kEdge, job.ry * kEdge, job.rz * kEdge, kEdge, false };
+			root.car = CarIn(root);
+			--a_budget;
+			stack_.push_back(root);
+			phase_ = Phase::kOctree;
 		}
-		return rays;
-	}
-
-	int Collision::ScanColumn(double a_mcX, double a_mcZ)
-	{
-		const auto& cfg = Config();
-		const auto  step = 1.0 / cfg.samplesPerBlock;
-		const auto  top = yMax_ + 1.0;
-		const auto  bottom = static_cast<double>(yMin_);
-		const auto  x = a_mcX;
-		const auto  z = a_mcZ;
-
-		int              rays = 0;
-		RED4ext::Vector4 hit{};
-		RED4ext::Vector4 normal{};
-		RED4ext::CName   material{};
-
-		// The water surface, once per block column in the water grid: water is its own collision
-		// group ("Water", water.physmat), which the city's groups don't include, so the down rays
-		// below go straight through it to the bottom.
-		if (a_mcX - std::floor(a_mcX) < step && a_mcZ - std::floor(a_mcZ) < step) {
-			const auto gx = FloorI(a_mcX) - water_.originX;
-			const auto gz = FloorI(a_mcZ) - water_.originZ;
-			if (gx >= 0 && gz >= 0 && gx < int(proto::kWaterGridSize) && gz < int(proto::kWaterGridSize)) {
-				++rays;
-				double surfaceY = 0.0;
-				if (WaterSurface({ x, top, z }, { x, bottom, z }, surfaceY)) {
-					RecordWater(x, z, surfaceY);
+		if (phase_ == Phase::kOctree) {
+			Descend(a_budget, a_deadline);
+			if (!stack_.empty()) {
+				return false;
+			}
+			cellList_.assign(cells_.begin(), cells_.end());
+			phase_ = Phase::kCells;
+		}
+		if (phase_ == Phase::kCells) {
+			while (nextCell_ < cellList_.size()) {
+				if (spent()) {
+					return false;
+				}
+				const auto key = cellList_[nextCell_++];
+				const auto x = Unpack21(key >> 42), y = Unpack21(key >> 21), z = Unpack21(key);
+				int        rays = 0;
+				const auto bits = Carve(x, y, z, rays);
+				sweepRays_ += rays;
+				a_budget -= std::max(rays, 1);
+				MarkCell(x, y, z, bits);
+				if (movingCells_.contains(key)) {
+					movingFound_.push_back({ key, bits, true });
 				}
 			}
 		}
+		phase_ = Phase::kStart;
+		return true;
+	}
 
-		// Downward multi-hit: every surface in the column, so overhangs and the floors above
-		// the player are solid too.
-		double groundY = std::numeric_limits<double>::quiet_NaN();
-		double from = top;
-		int    surfaces = 0;
-		int    insideSteps = 0;
-		int    insideRun = 0;  // starts inside a solid in a row
-		double insideDepth = 0.0;
-		while (from > bottom && surfaces < cfg.maxHitsPerColumn && insideSteps < kMaxInsideSteps) {
-			++rays;
-			bool inside = false;
-			if (!Raycast({ x, from, z }, { x, bottom, z }, hit, normal, material, &inside)) {
-				break;
+	void Collision::Descend(int& a_budget, std::chrono::steady_clock::time_point a_deadline)
+	{
+		const auto yLo = known_[1], yHi = known_[4];  // the window, cells
+		const bool coarse = !pending_.empty() && pending_.back().coarse;
+		while (!stack_.empty()) {
+			if (a_budget <= 0 || std::chrono::steady_clock::now() >= a_deadline) {
+				return;
 			}
-			if (inside) {
-				// The ray began inside a solid (a box, a convex hull: the next start under a hit is
-				// inside whatever was hit, if it's thick). That says nothing about where the solid
-				// ends, and taking it as a surface (or a miss) used to end the column there, never
-				// reaching the floor under a roof or a balcony: step on down through it instead.
-				++sweepInside_;
-				++insideSteps;
-				const auto down = kInsideSteps[std::min<std::size_t>(insideRun++, kInsideSteps.size() - 1)];
-				from -= down;
-				insideDepth += down;
-				if (insideDepth > kMaxInsideDepth) {
+			const auto node = stack_.back();
+			stack_.pop_back();
+			if (node.y >= yHi || node.y + node.size <= yLo) {
+				continue;
+			}
+			// The player's own blocks: their colliders are Static, and Minecraft has the blocks anyway.
+			if (Builds::Filled(FloorDiv(node.x, kCellsPerBlock), FloorDiv(node.y, kCellsPerBlock), FloorDiv(node.z, kCellsPerBlock),
+					FloorDiv(node.x + node.size - 1, kCellsPerBlock) + 1, FloorDiv(node.y + node.size - 1, kCellsPerBlock) + 1,
+					FloorDiv(node.z + node.size - 1, kCellsPerBlock) + 1)) {
+				++sweepBuilt_;
+				continue;
+			}
+			--a_budget;
+			RED4ext::CName material{};
+			bool           moving = false;
+			if (!OverlapsNode(node, &material, &moving)) {
+				continue;  // nothing anywhere in it: one query for the lot
+			}
+			// A car in the region: is it in this box? Cars are the car layer's, never the city's.
+			bool car = false;
+			if (node.car) {
+				--a_budget;
+				car = CarIn(node);
+				if (car && (node.size == 1 || (coarse && node.size == 2))) {
+					++sweepCars_;
+					continue;
+				}
+			}
+			if (coarse && node.size == 2) {
+				// Far off: the half block whole, as long as it's the city's (not a car, the player's own
+				// colliders, water).
+				if (!car && material != OwnMaterial() && !IsWater(material)) {
+					MarkSolid(node);
+					++sweepCells_;
+					++hits_;
+					++sweepMaterials_[material.hash];
+				}
+				continue;
+			}
+			if (node.size > 1) {
+				// Deep in a solid (the ground under the terrain's surface, a thick slab of street, a building's
+				// convex bulk), every box is solid: the box grown by a cell all round has all its corners
+				// inside something (a ray from each starts in it), and it's solid all through, without going
+				// down to its cells. Grown, so that a box with the solid's surface on its side (which the
+				// lift makes its) never is. Left out, the inside of a thick street read as a hollow under
+				// it, and a crater blown in it opened into nothing.
+				bool interior = true;
+				for (int i = 0; i < 8 && interior; ++i) {
+					const auto  corner1D = [&](std::int32_t a_lo, int a_far) { return (a_lo + a_far * node.size) * kCell + (a_far ? kCell : -kCell); };
+					const McVec corner{ corner1D(node.x, i & 1), corner1D(node.y, (i >> 1) & 1), corner1D(node.z, (i >> 2) & 1) };
+					RED4ext::Vector4 hit{};
+					RED4ext::Vector4 normal{};
+					RED4ext::CName   inMaterial{};
+					float            distance = 1.0f;
+					--a_budget;
+					++sweepRays_;
+					interior = RaySolid(corner, { corner.x, corner.y + 0.05, corner.z }, hit, normal, inMaterial, distance) && distance < kInsideBlocks;
+				}
+				if (interior) {
+					++sweepInterior_;
+					MarkSolid(node);
+					continue;
+				}
+				const auto half = node.size / 2;
+				for (int i = 0; i < 8; ++i) {
+					stack_.push_back({ node.x + (i & 1) * half, node.y + ((i >> 1) & 1) * half, node.z + ((i >> 2) & 1) * half, half, car });
+				}
+				continue;
+			}
+			if (material == OwnMaterial()) {
+				// One of the player's colliders: beside this cell and touching it by the lift, or one not
+				// despawned yet. The cell again a hair smaller, clear of the one beside it.
+				--a_budget;
+				const McVec lo{ node.x * kCell + kPad, node.y * kCell + kPad, node.z * kCell + kPad };
+				const McVec hi{ (node.x + 1) * kCell - kPad, (node.y + 1) * kCell - kPad, (node.z + 1) * kCell - kPad };
+				if (!Overlaps(lo, hi, &material) || material == OwnMaterial()) {
+					++sweepOwn_;
+					continue;
+				}
+			}
+			if (IsWater(material) || (bodyMaterial_ != RED4ext::CName() && material == bodyMaterial_)) {
+				++sweepBody_;
+				continue;  // water is swum in (the water grid); V's own body isn't the city
+			}
+			cells_.insert(CellKey(node.x, node.y, node.z));
+			if (moving) {
+				movingCells_.insert(CellKey(node.x, node.y, node.z));
+				++sweepMoving_;
+			}
+			++sweepCells_;
+			++hits_;
+			++sweepMaterials_[material.hash];
+		}
+	}
+
+	std::uint8_t Collision::Carve(std::int32_t a_x, std::int32_t a_y, std::int32_t a_z, int& a_rays)
+	{
+		// A solid cell is whole to start with: something is in it. A side with air beside it is looked
+		// into from that air, along the cell's centre line: where the surface is, the near half of the
+		// cell (a sub-voxel) is air too. A surface that leans (a ramp, a step's nosing) is followed by its
+		// normal across the cell's four sub-voxel columns. A ray that finds nothing (the something isn't
+		// on the centre line: a railing's bar, an edge) leaves the cell whole.
+		const std::array<std::int32_t, 3> cell{ a_x, a_y, a_z };
+		std::uint8_t                      bits = 0xFF;  // x + 2 * (z + 2 * y)
+		for (int axis = 0; axis < 3; ++axis) {
+			for (const int sign : { -1, 1 }) {
+				auto beside = cell;
+				beside[axis] += sign;
+				const auto besideKey = CellKey(beside[0], beside[1], beside[2]);
+				if (beside[axis] < known_[axis] || beside[axis] >= known_[axis + 3]) {
+					// In the next region: asked about on its own (once).
+					auto asked = outside_.find(besideKey);
+					if (asked == outside_.end()) {
+						RED4ext::CName material{};
+						++a_rays;
+						const bool solid = OverlapsNode({ beside[0], beside[1], beside[2], 1 }, &material) && material != OwnMaterial() && !IsWater(material) &&
+						                   !(bodyMaterial_ != RED4ext::CName() && material == bodyMaterial_);
+						asked = outside_.emplace(besideKey, solid).first;
+					}
+					if (asked->second) {
+						continue;  // solid beside it: no surface on this side
+					}
+				} else if (cells_.contains(besideKey)) {
+					continue;  // solid beside it: no surface on this side
+				}
+				McVec      from{ (a_x + 0.5) * kCell, (a_y + 0.5) * kCell, (a_z + 0.5) * kCell };
+				McVec      to = from;
+				const auto lo = cell[axis] * kCell;
+				const auto face = sign > 0 ? lo + kCell : lo;
+				SetAxis(from, axis, face + sign * 2.0 * kPad);
+				SetAxis(to, axis, face - sign * (kCell + kPad));
+				++a_rays;
+				RED4ext::Vector4 hit{};
+				RED4ext::Vector4 normal{};
+				RED4ext::CName   material{};
+				float            distance = 0.0f;
+				const bool       found = RaySolid(from, to, hit, normal, material, distance);
+				if (explain_) {
+					logger::info("cityprobe:     cell ({}, {}, {}) from {}{}: {}", a_x, a_y, a_z, sign > 0 ? '+' : '-', "xyz"[axis],
+						found ? std::format("surface {:.3f} blocks in, normal ({:.2f}, {:.2f}, {:.2f}), {}", distance, normal.X, normal.Y, normal.Z, MaterialName(material))
+							  : std::string("nothing on its centre line"));
+				}
+				if (!found || distance < kInsideBlocks) {
+					continue;
+				}
+				const int    b = (axis + 1) % 3, c = (axis + 2) % 3;
+				const double na = Axis(normal, axis), nb = Axis(normal, b), nc = Axis(normal, c);
+				const double mid = lo + 0.5 * kCell;
+				bool         trimmed = false;
+				for (int i = 0; i < 2; ++i) {
+					for (int j = 0; j < 2; ++j) {
+						// Where the surface crosses this sub-voxel column, a sixteenth of a block off the
+						// centre line each way.
+						double at = Axis(hit, axis);
+						if (std::abs(na) > 0.3) {
+							at -= (nb * (i ? 1.0 : -1.0) + nc * (j ? 1.0 : -1.0)) / 16.0 / na;
+						}
+						at = std::clamp(at, lo, lo + kCell);
+						if (sign > 0 ? at >= mid : at <= mid) {
+							continue;  // the surface is in the near sub-voxel: it stays
+						}
+						std::array<int, 3> sub{};
+						sub[axis] = sign > 0 ? 1 : 0;
+						sub[b] = i;
+						sub[c] = j;
+						bits &= static_cast<std::uint8_t>(~(1u << (sub[0] + 2 * (sub[2] + 2 * sub[1]))));
+						trimmed = true;
+					}
+				}
+				sweepTrims_ += trimmed ? 1 : 0;
+			}
+		}
+		// Trimmed away to nothing by two unrelated surfaces: the query said something is in it.
+		return bits ? bits : std::uint8_t(0xFF);
+	}
+
+	void Collision::MarkCell(std::int32_t a_x, std::int32_t a_y, std::int32_t a_z, std::uint8_t a_bits)
+	{
+		// Nothing found inside Minecraft's player (a hair smaller than it) goes to Minecraft, which would
+		// only hold the player stuck in it: a door swung shut on it, or the game's own body.
+		// From a little over the feet: the floor they stand on is rounded up to the eighth, and reaches
+		// that far into a player standing on the real one.
+		constexpr double kIn = 0.02;
+		const double     px0 = player_.x - 0.3 + kIn, px1 = player_.x + 0.3 - kIn;
+		const double     py0 = player_.y + 0.15, py1 = player_.y + 1.8 - kIn;
+		const double     pz0 = player_.z - 0.3 + kIn, pz1 = player_.z + 0.3 - kIn;
+		for (int i = 0; i < 8; ++i) {
+			if (!(a_bits & (1u << i))) {
+				continue;
+			}
+			const auto gx = a_x * 2 + (i & 1);
+			const auto gz = a_z * 2 + ((i >> 1) & 1);
+			const auto gy = a_y * 2 + ((i >> 2) & 1);
+			if (gx / 8.0 < px1 && (gx + 1) / 8.0 > px0 && gy / 8.0 < py1 && (gy + 1) / 8.0 > py0 && gz / 8.0 < pz1 && (gz + 1) / 8.0 > pz0) {
+				++sweepBody_;
+				continue;
+			}
+			SetSub(regions_, gx, gy, gz);
+		}
+	}
+
+	void Collision::MarkSolid(const Node& a_node)
+	{
+		// Whole blocks a mask at a time; a box smaller than a block (or off the block grid), sub-voxel by sub-voxel.
+		if (a_node.size % kCellsPerBlock == 0 && a_node.x % kCellsPerBlock == 0 && a_node.y % kCellsPerBlock == 0 && a_node.z % kCellsPerBlock == 0) {
+			Mask full;
+			full.fill(~0ull);
+			const auto blocks = a_node.size / kCellsPerBlock;
+			for (std::int32_t by = 0; by < blocks; ++by) {
+				for (std::int32_t bz = 0; bz < blocks; ++bz) {
+					for (std::int32_t bx = 0; bx < blocks; ++bx) {
+						const auto x = FloorDiv(a_node.x, kCellsPerBlock) + bx, y = FloorDiv(a_node.y, kCellsPerBlock) + by, z = FloorDiv(a_node.z, kCellsPerBlock) + bz;
+						const auto rx = FloorDiv(x, kRegionSize), ry = FloorDiv(y, kRegionSize), rz = FloorDiv(z, kRegionSize);
+						const auto local = static_cast<std::uint32_t>((x - rx * kRegionSize) + kRegionSize * ((y - ry * kRegionSize) + kRegionSize * (z - rz * kRegionSize)));
+						regions_[RegionKey(rx, ry, rz)].blocks[local] = full;
+					}
+				}
+			}
+			return;
+		}
+		const auto per = 8 / kCellsPerBlock;  // sub-voxels per cell edge
+		for (std::int32_t gy = a_node.y * per; gy < (a_node.y + a_node.size) * per; ++gy) {
+			for (std::int32_t gz = a_node.z * per; gz < (a_node.z + a_node.size) * per; ++gz) {
+				for (std::int32_t gx = a_node.x * per; gx < (a_node.x + a_node.size) * per; ++gx) {
+					SetSub(regions_, gx, gy, gz);
+				}
+			}
+		}
+	}
+
+	void Collision::SetSub(Regions& a_into, std::int32_t a_gx, std::int32_t a_gy, std::int32_t a_gz)
+	{
+		const auto bx = FloorDiv(a_gx, 8);
+		const auto by = FloorDiv(a_gy, 8);
+		const auto bz = FloorDiv(a_gz, 8);
+		const auto rx = FloorDiv(bx, kRegionSize);
+		const auto ry = FloorDiv(by, kRegionSize);
+		const auto rz = FloorDiv(bz, kRegionSize);
+		auto&      region = a_into[RegionKey(rx, ry, rz)];
+		const auto local = static_cast<std::uint32_t>((bx - rx * kRegionSize) + kRegionSize * ((by - ry * kRegionSize) + kRegionSize * (bz - rz * kRegionSize)));
+		region.blocks[local][a_gy - by * 8] |= 1ull << ((a_gz - bz * 8) * 8 + (a_gx - bx * 8));
+	}
+
+	bool Collision::SolidFilter(RED4ext::physics::QueryFilter& a_filter)
+	{
+		// Built by the game's own physicsQueryFilter.AddGroup, group by group, as scripts do.
+		static RED4ext::physics::QueryFilter filter{};
+		static bool                          built = false;
+		static bool                          usable = false;
+		if (!built) {
+			built = true;
+			static rtti::Method addGroup{ "physicsQueryFilter", "AddGroup" };
+			for (auto group : GroupList(Config().solidGroups)) {
+				if (!addGroup.Call(nullptr, nullptr, filter, group)) {
+					logger::warn("collision: physicsQueryFilter.AddGroup({}) failed", group.ToString());
+				}
+			}
+			usable = filter.mask1 != 0 || filter.mask2 != 0;
+			logger::info("collision: the query filter of \"{}\" is mask1 {:#x} mask2 {:#x}", Config().solidGroups, filter.mask1, filter.mask2);
+		}
+		a_filter = filter;
+		return usable;
+	}
+
+	bool Collision::OverlapRaw(const RED4ext::Vector4& a_dimension, const RED4ext::Vector4& a_centre, RED4ext::CName* a_material, bool* a_moving)
+	{
+		// OverlapByQueryFilter(primitiveDimension, position, rotation: Quaternion, queryFilter, out result)
+		// and Overlap(primitiveDimension, position, rotation: EulerAngles, collisionGroup, out result),
+		// as the live game's RTTI dump spells them.
+		static rtti::Method                      byFilter{ "gameSpatialQueriesSystem", "OverlapByQueryFilter" };
+		static rtti::Method                      byGroup{ "gameSpatialQueriesSystem", "Overlap" };
+		static const std::vector<RED4ext::CName> groups = GroupList(Config().solidGroups);
+		if (!spatial_) {
+			return false;
+		}
+		++sweepBoxes_;
+		// Turned with the grid, as Builds turns its colliders (about the vertical).
+		const double                  yaw = gGridYaw.load(std::memory_order_relaxed);
+		RED4ext::Vector4              dimension = a_dimension;
+		RED4ext::Vector4              centre = a_centre;
+		RED4ext::physics::TraceResult result{};
+		bool                          hit = false;
+		if (byFilter_) {
+			RED4ext::physics::QueryFilter filter{};
+			SolidFilter(filter);
+			const double        half = yaw * 0.017453292519943295 * 0.5;
+			RED4ext::Quaternion rotation{ 0.0f, 0.0f, static_cast<float>(std::sin(half)), static_cast<float>(std::cos(half)) };
+			if (!byFilter.Call(spatial_, &hit, dimension, centre, rotation, filter, result)) {
+				return false;
+			}
+		} else {
+			RED4ext::EulerAngles rotation{ 0.0f, 0.0f, static_cast<float>(yaw) };
+			for (auto group : groups) {
+				result = {};
+				hit = false;
+				if (byGroup.Call(spatial_, &hit, dimension, centre, rotation, group, result) && hit) {
 					break;
 				}
-				continue;
 			}
-			insideRun = 0;
-			insideDepth = 0.0;
-			++surfaces;
-			const auto surfaceY = static_cast<double>(hit.Y);
-			if (IsWater(material)) {
-				// Water is not collision: Minecraft wants its surface height so its own
-				// swimming physics can take over.
-				RecordWater(x, z, surfaceY);
-				from = surfaceY - 0.05;
-				continue;
-			}
-			rule_ = "floor (a down ray's hit)";
-			MarkSurface(regions_, x, z, surfaceY, normal);
-			bool steep = std::abs(normal.Y) < cfg.steepNormalY;
-			if (steep) {
-				// A step's rounded front edge reads as steep too, and with the grid turned along a
-				// staircase a whole row of samples lands on the same edge: a fence of posts half a
-				// block apart, too close for Minecraft's player to pass. Just behind the edge (against
-				// the face's outward lean) a step has flat ground no higher than Minecraft steps up;
-				// a steep slope or a wall doesn't.
-				const double h = std::sqrt(double(normal.X) * normal.X + double(normal.Z) * normal.Z);
-				if (h > 1e-3) {
-					constexpr double kBehind = 0.125;
-					const double     bx = x - normal.X / h * kBehind, bz = z - normal.Z / h * kBehind;
-					RED4ext::Vector4 topHit{};
-					RED4ext::Vector4 topNormal{};
-					RED4ext::CName   topMaterial{};
-					bool             topInside = false;
-					++rays;
-					if (Raycast({ bx, surfaceY + 0.75, bz }, { bx, surfaceY - 0.25, bz }, topHit, topNormal, topMaterial, &topInside) && !topInside &&
-						std::abs(topNormal.Y) >= cfg.steepNormalY && topHit.Y - surfaceY <= 0.6) {
-						steep = false;
-					}
-				}
-			}
-			if (steep) {
-				// Too steep to walk: raise a wall column so Minecraft's step-up refuses it
-				// (DESIGN.md §5.1). Down rays only graze such faces, so this is a backstop;
-				// the horizontal probes below are what actually find walls.
-				rule_ = "steep hit (a 2.5-block wall raised over it)";
-				MarkSpan(regions_, x, z, surfaceY, surfaceY + cfg.wallHeight);
-			}
-			// The walls that matter are at the height the player is at now, not where the sweep
-			// started.
-			if (std::isnan(groundY) && surfaceY <= feetY_ + 2.0) {
-				groundY = surfaceY;
-			}
-			from = surfaceY - 0.05;
 		}
-		if (surfaces >= cfg.maxHitsPerColumn) {
-			++sweepCapped_;
+		if (!hit) {
+			return false;
 		}
-		if (std::isnan(groundY)) {
-			return rays;  // nothing underfoot here: no height to hang the wall probes off
+		++sweepBoxHits_;
+		if (a_material) {
+			*a_material = result.material;
 		}
+		if (a_moving) {
+			*a_moving = result.simulationType == RED4ext::physics::SimulationType::Dynamic || result.simulationType == RED4ext::physics::SimulationType::Kinematic;
+		}
+		return true;
+	}
 
-		// Walls: short probes at knee, waist and head height. A hit marks a 3/4-block band, so
-		// consecutive heights join into one continuous surface.
-		for (const double height : { 0.25, 1.0, 1.75 }) {
-			const auto y = groundY + height;
-			if (y < bottom || y > top) {
-				continue;
+	bool Collision::Overlaps(const McVec& a_min, const McVec& a_max, RED4ext::CName* a_material, bool* a_moving)
+	{
+		const auto scale = (dimension_ == Dimension::kFull ? 1.0 : 0.5) * MetresPerBlock();
+		const auto centre = McToCp((a_min.x + a_max.x) * 0.5, (a_min.y + a_max.y) * 0.5, (a_min.z + a_max.z) * 0.5);
+		// Minecraft x, y, z extents are Cyberpunk x, z, y, along the grid's turned axes.
+		const RED4ext::Vector4 dimension{ static_cast<float>((a_max.x - a_min.x) * scale), static_cast<float>((a_max.z - a_min.z) * scale),
+			static_cast<float>((a_max.y - a_min.y) * scale), 0.0f };
+		return OverlapRaw(dimension, { centre.x, centre.y, centre.z, 1.0f }, a_material, a_moving);
+	}
+
+	bool Collision::OverlapsNode(const Node& a_node, RED4ext::CName* a_material, bool* a_moving)
+	{
+		const McVec  lo{ a_node.x * kCell + kPad, a_node.y * kCell + kPad, a_node.z * kCell + kPad };
+		const double edge = a_node.size * kCell;
+		return Overlaps(lo, { lo.x + edge, lo.y + edge, lo.z + edge }, a_material, a_moving);
+	}
+
+	bool Collision::CarIn(const Node& a_node)
+	{
+		static rtti::Method                      byGroup{ "gameSpatialQueriesSystem", "Overlap" };
+		static const std::vector<RED4ext::CName> groups = GroupList(Config().vehicleGroup);
+		if (!spatial_ || !Config().vehicles) {
+			return false;
+		}
+		++sweepBoxes_;
+		// Grown by a cell all round: a car's blocker reaches a little past its body (the Vehicle group's
+		// hull), and those cells are the car's too.
+		const McVec      lo{ (a_node.x - 1) * kCell, (a_node.y - 1) * kCell, (a_node.z - 1) * kCell };
+		const double     edge = (a_node.size + 2) * kCell;
+		const auto       scale = (dimension_ == Dimension::kFull ? 1.0 : 0.5) * MetresPerBlock();
+		const auto       centre = McToCp(lo.x + edge * 0.5, lo.y + edge * 0.5, lo.z + edge * 0.5);
+		RED4ext::Vector4 dimension{ static_cast<float>(edge * scale), static_cast<float>(edge * scale), static_cast<float>(edge * scale), 0.0f };
+		RED4ext::Vector4 position{ centre.x, centre.y, centre.z, 1.0f };
+		RED4ext::EulerAngles rotation{ 0.0f, 0.0f, static_cast<float>(gGridYaw.load(std::memory_order_relaxed)) };
+		for (auto group : groups) {
+			RED4ext::physics::TraceResult result{};
+			bool                          hit = false;
+			if (byGroup.Call(spatial_, &hit, dimension, position, rotation, group, result) && hit) {
+				return true;
 			}
-			for (int axis = 0; axis < 2; ++axis) {
-				++rays;
-				const McVec to{ x + (axis == 0 ? step : 0.0), y, z + (axis == 1 ? step : 0.0) };
-				// Probes only run +x and +z: a face looking the other way is met from inside its solid,
-				// a hit where the probe starts, and that hit is what marks it. Leaving such starts
-				// out opened every wall facing -x or -z.
-				if (Raycast({ x, y, z }, to, hit, normal, material)) {
-					// At the knee the band reaches 0.625 blocks up, past the 0.6 Minecraft's player
-					// steps up, so a step a little over a quarter block tall (a stair, ~19 cm at 0.75)
-					// turned into a wall there was no getting over. Down just past the face, its top:
-					// the band ends there. A real wall is still solid that high, and keeps the band.
-					double y1 = y + 0.375;
-					if (height < 0.5) {
-						constexpr double kIn = 0.0625;
-						const McVec      over{ hit.X - normal.X * kIn, groundY + 0.75, hit.Z - normal.Z * kIn };
-						RED4ext::Vector4 topHit{};
-						RED4ext::Vector4 topNormal{};
-						RED4ext::CName   topMaterial{};
-						bool             inside = false;
-						++rays;
-						if (Raycast(over, { over.x, y - 0.375, over.z }, topHit, topNormal, topMaterial, &inside) && !inside && topHit.Y < y1) {
-							y1 = std::max<double>(topHit.Y - kEps, y - 0.375);  // as floors: up to the top, not a voxel past it
+		}
+		return false;
+	}
+
+	void Collision::Watch(int& a_budget, std::chrono::steady_clock::time_point a_deadline)
+	{
+		// Four times a second, the moving bodies' cells in the regions round the player (the one it's
+		// in and those next to it) asked about again, one query each.
+		const auto now = std::chrono::steady_clock::now();
+		if (moving_.empty() || now - watchedAt_ < std::chrono::milliseconds(250)) {
+			return;
+		}
+		watchedAt_ = now;
+		const auto prx = FloorDiv(FloorI(player_.x), kRegionSize), pry = FloorDiv(FloorI(player_.y), kRegionSize), prz = FloorDiv(FloorI(player_.z), kRegionSize);
+		for (auto rx = prx - 1; rx <= prx + 1; ++rx) {
+			for (auto ry = pry - 1; ry <= pry + 1; ++ry) {
+				for (auto rz = prz - 1; rz <= prz + 1; ++rz) {
+					const auto key = RegionKey(rx, ry, rz);
+					const auto cells = moving_.find(key);
+					const auto sent = sent_.find(key);
+					if (cells == moving_.end() || sent == sent_.end()) {
+						continue;
+					}
+					bool changed = false;
+					for (auto& cell : cells->second) {
+						if (a_budget <= 0 || std::chrono::steady_clock::now() >= a_deadline) {
+							break;
+						}
+						--a_budget;
+						++watchQueries_;
+						const auto x = Unpack21(cell.cell >> 42), y = Unpack21(cell.cell >> 21), z = Unpack21(cell.cell);
+						RED4ext::CName material{};
+						const bool     there = OverlapsNode({ x, y, z, 1 }, &material) && material != OwnMaterial();
+						if (there == cell.there) {
+							continue;
+						}
+						cell.there = there;
+						changed = true;
+						// Its sub-voxels in what Minecraft has of the region: gone with the door, back when it shuts.
+						for (int i = 0; i < 8; ++i) {
+							if (!(cell.bits & (1u << i))) {
+								continue;
+							}
+							const auto gx = x * 2 + (i & 1), gz = z * 2 + ((i >> 1) & 1), gy = y * 2 + ((i >> 2) & 1);
+							const auto bx = FloorDiv(gx, 8), by = FloorDiv(gy, 8), bz = FloorDiv(gz, 8);
+							const auto local = static_cast<std::uint32_t>((bx - rx * kRegionSize) + kRegionSize * ((by - ry * kRegionSize) + kRegionSize * (bz - rz * kRegionSize)));
+							const auto bit = 1ull << ((gz - bz * 8) * 8 + (gx - bx * 8));
+							auto&      mask = sent->second.blocks[local];
+							mask[gy - by * 8] = there ? (mask[gy - by * 8] | bit) : (mask[gy - by * 8] & ~bit);
 						}
 					}
-					rule_ = height < 0.5 ? "wall probe at the knee" : height < 1.5 ? "wall probe at the waist" : "wall probe at the head";
-					MarkWall(axis, axis == 0 ? z : x, hit, normal, y - 0.375, y1);
+					if (changed) {
+						++watchChanges_;
+						SendRegion(key, rx, ry, rz, &sent->second);
+					}
 				}
 			}
 		}
-		return rays;
+	}
+
+	bool Collision::RaySolid(const McVec& a_from, const McVec& a_to, RED4ext::Vector4& a_hit, RED4ext::Vector4& a_normal, RED4ext::CName& a_material,
+		float& a_distance)
+	{
+		// SyncRaycastByQueryFilter(start, end, queryFilter, out result, staticOnly, dynamicOnly) and
+		// SyncRaycastByCollisionGroup(start, end, collisionGroup, out result, staticOnly, dynamicOnly).
+		static rtti::Method                      byFilter{ "gameSpatialQueriesSystem", "SyncRaycastByQueryFilter" };
+		static rtti::Method                      byGroup{ "gameSpatialQueriesSystem", "SyncRaycastByCollisionGroup" };
+		static const std::vector<RED4ext::CName> groups = GroupList(Config().solidGroups);
+		if (!spatial_) {
+			return false;
+		}
+		const auto       f = McToCp(a_from.x, a_from.y, a_from.z);
+		const auto       t = McToCp(a_to.x, a_to.y, a_to.z);
+		RED4ext::Vector4 from{ f.x, f.y, f.z, 1.0f };
+		RED4ext::Vector4 to{ t.x, t.y, t.z, 1.0f };
+		const float      dx = to.X - from.X, dy = to.Y - from.Y, dz = to.Z - from.Z;
+		const float      length = std::sqrt(dx * dx + dy * dy + dz * dz);
+		if (length < 1e-5f) {
+			return false;
+		}
+		RED4ext::physics::TraceResult best{};
+		float                         bestAlong = std::numeric_limits<float>::max();
+		// One cast, on through the player's own colliders, water and V's body (none of them the city).
+		const auto trace = [&](auto&& a_cast) {
+			RED4ext::Vector4 start = from;
+			for (int pass = 0; pass < 8; ++pass) {
+				RED4ext::physics::TraceResult result{};
+				if (!a_cast(start, result)) {
+					return;
+				}
+				// From inside a solid the hit is where this cast started (its position isn't to be trusted).
+				const auto  project = [&](float a_x, float a_y, float a_z) { return ((a_x - from.X) * dx + (a_y - from.Y) * dy + (a_z - from.Z) * dz) / length; };
+				const float along = result.distance < 1e-3f ? project(start.X, start.Y, start.Z) : project(result.position.X, result.position.Y, result.position.Z);
+				if (result.material == OwnMaterial() || IsWater(result.material) || (bodyMaterial_ != RED4ext::CName() && result.material == bodyMaterial_)) {
+					sweepOwn_ += result.material == OwnMaterial() ? 1 : 0;
+					// Just past it; a quarter metre on from inside one, where the hit is where it started.
+					const float next = along + (result.distance < 1e-3f ? 0.25f : 0.02f);
+					if (next >= length) {
+						return;
+					}
+					start = { from.X + dx * next / length, from.Y + dy * next / length, from.Z + dz * next / length, 1.0f };
+					continue;
+				}
+				if (along < bestAlong) {
+					bestAlong = std::max(along, 0.0f);
+					best = result;
+				}
+				return;
+			}
+		};
+		bool staticOnly = false;
+		bool dynamicOnly = false;
+		if (rayByFilter_) {
+			RED4ext::physics::QueryFilter filter{};
+			SolidFilter(filter);
+			trace([&](RED4ext::Vector4& a_start, RED4ext::physics::TraceResult& a_result) {
+				bool hit = false;
+				return byFilter.Call(spatial_, &hit, a_start, to, filter, a_result, staticOnly, dynamicOnly) && hit;
+			});
+		} else {
+			for (auto group : groups) {
+				trace([&](RED4ext::Vector4& a_start, RED4ext::physics::TraceResult& a_result) {
+					bool hit = false;
+					return byGroup.Call(spatial_, &hit, a_start, to, group, a_result, staticOnly, dynamicOnly) && hit;
+				});
+			}
+		}
+		if (bestAlong == std::numeric_limits<float>::max()) {
+			return false;
+		}
+		a_material = best.material;
+		const auto hitMc = CpToMc(best.position.X, best.position.Y, best.position.Z);
+		a_hit = { static_cast<float>(hitMc.x), static_cast<float>(hitMc.y), static_cast<float>(hitMc.z), 1.0f };
+		// Normals swap axes the same way positions do, with no translation to drop.
+		const auto normalMc = CpDirToMc(best.normal.X, best.normal.Y, best.normal.Z);
+		a_normal = { static_cast<float>(normalMc.x), static_cast<float>(normalMc.y), static_cast<float>(normalMc.z), 0.0f };
+		a_distance = static_cast<float>(bestAlong / MetresPerBlock());
+		return true;
+	}
+
+	bool Collision::Calibrate(const McVec& a_playerMc)
+	{
+		if (dimension_ != Dimension::kUnknown) {
+			return true;
+		}
+		++calibrationTries_;
+		// Whether the game takes a box's dimension as half extents or whole, and whether one query by
+		// the filter finds what the groups one by one do: small boxes just over a floor a static ray
+		// found. A box centred a quarter of its half size over the floor reaches it either way, at three
+		// quarters only as half extents, at three halves not at all.
+		RED4ext::physics::QueryFilter filter{};
+		const bool                    haveFilter = SolidFilter(filter);
+		constexpr double              kHalf = 0.1;  // blocks
+		const auto                    size = static_cast<float>(kHalf * MetresPerBlock());
+		const RED4ext::Vector4        dimension{ size, size, size, 0.0f };
+		std::string                   tried;
+		// A block from V: clear of her body, which the queries might see.
+		constexpr std::array<std::pair<double, double>, 8> kAround{ { { 1.0, 0.0 }, { -1.0, 0.0 }, { 0.0, 1.0 }, { 0.0, -1.0 }, { 1.0, 1.0 },
+			{ -1.0, -1.0 }, { 1.0, -1.0 }, { -1.0, 1.0 } } };
+		for (const auto& [ox, oz] : kAround) {
+			const McVec      top{ a_playerMc.x + ox, a_playerMc.y + 1.5, a_playerMc.z + oz };
+			const McVec      bottom{ top.x, a_playerMc.y - 8.0, top.z };
+			RED4ext::Vector4 hit{};
+			RED4ext::Vector4 normal{};
+			RED4ext::CName   material{};
+			bool             inside = false;
+			if (!Raycast(top, bottom, hit, normal, material, &inside) || inside || normal.Y < 0.9f) {
+				continue;
+			}
+			const double floorY = hit.Y;
+			const auto   at = [&](double a_above) {
+                const auto c = McToCp(top.x, floorY + a_above, top.z);
+                return RED4ext::Vector4{ c.x, c.y, c.z, 1.0f };
+			};
+			for (const bool filtered : { true, false }) {
+				if (filtered && !haveFilter) {
+					continue;
+				}
+				byFilter_ = filtered;
+				const bool reach = OverlapRaw(dimension, at(0.25 * kHalf), nullptr);
+				const bool half = OverlapRaw(dimension, at(0.75 * kHalf), nullptr);
+				const bool clear = !OverlapRaw(dimension, at(3.0 * kHalf), nullptr);
+				tried += std::format(" [{} over {} at y {:.2f}: {} {} {}]", filtered ? "filter" : "groups", MaterialName(material), floorY, reach, half, !clear);
+				if (!reach || !clear) {
+					continue;
+				}
+				dimension_ = half ? Dimension::kHalf : Dimension::kFull;
+				// Rays: the filtered one must find the same floor.
+				rayByFilter_ = haveFilter;
+				if (haveFilter) {
+					RED4ext::Vector4 rayHit{};
+					RED4ext::Vector4 rayNormal{};
+					RED4ext::CName   rayMaterial{};
+					float            distance = 0.0f;
+					if (!RaySolid(top, bottom, rayHit, rayNormal, rayMaterial, distance) || std::abs(rayHit.Y - floorY) > 0.02) {
+						rayByFilter_ = false;
+					}
+				}
+				// V's own body, which Minecraft's player stands in: if the queries see it, what it's made of
+				// is left out of the city.
+				const auto     chest = McToCp(a_playerMc.x, a_playerMc.y + 1.0, a_playerMc.z);
+				RED4ext::CName body{};
+				if (OverlapRaw(dimension, { chest.x, chest.y, chest.z, 1.0f }, &body) && body != material) {
+					bodyMaterial_ = body;
+				}
+				logger::info("collision: box queries {}, rays {}; a box's dimension is its {} extents; V's body is {}{}",
+					byFilter_ ? "by the one filter" : "group by group", rayByFilter_ ? "by the filter" : "group by group",
+					dimension_ == Dimension::kHalf ? "half" : "whole", bodyMaterial_ != RED4ext::CName() ? "SEEN, left out: " : "not seen",
+					bodyMaterial_ != RED4ext::CName() ? MaterialName(bodyMaterial_) : "");
+				logger::info("collision: (calibrated on{})", tried);
+				return true;
+			}
+		}
+		if (calibrationTries_ == 1 || calibrationTries_ % 600 == 0) {
+			logger::warn("collision: no sweep yet, the box queries aren't worked out (no flat floor a block from the player, or they find nothing):{}",
+				tried.empty() ? std::string(" no floor") : tried);
+		}
+		return false;
 	}
 
 	void Collision::Guard(const McVec& a_playerMc)
@@ -475,8 +1050,7 @@ namespace cybercraft
 			return;
 		}
 		// Every sample cell under Minecraft's player (0.6 blocks wide) and half a block round it, for
-		// where it will be by the next frame. The same cells the sweep samples, so a surface lands on
-		// the same sub-voxels either way.
+		// where it will be by the next frame.
 		constexpr double kReach = 0.3 + 0.5;
 		const auto       spb = cfg.samplesPerBlock;
 		const auto       step = 1.0 / spb;
@@ -493,12 +1067,23 @@ namespace cybercraft
 				const auto z = (sz + 0.5) * step;
 				// From half a block up, inside the player's body where nothing solid is, down to the
 				// first surface under the feet: what the player stands on, or lands on next.
-				bool inside = false;
-				if (!Raycast({ x, a_playerMc.y + 0.5, z }, { x, a_playerMc.y - cfg.guardDepth, z }, hit, normal, material, &inside) || inside ||
-					IsWater(material) || std::abs(normal.Y) < 0.2f) {
+				++guardRays_;
+				float      distance = 0.0f;
+				const bool found = RaySolid({ x, a_playerMc.y + 0.5, z }, { x, a_playerMc.y - cfg.guardDepth, z }, hit, normal, material, distance);
+				if (!found || distance < kInsideBlocks || std::abs(normal.Y) < 0.2f) {
 					continue;  // a cell round the player can start in a wall; a grazed wall isn't ground
 				}
-				MarkSurface(guardScratch_, x, z, hit.Y, normal);
+				// The sub-voxels the surface is in, across the cell the octree finds there: never more than
+				// the sweep has.
+				const auto cx = FloorI(x * kCellsPerBlock);
+				const auto cz = FloorI(z * kCellsPerBlock);
+				const auto top = static_cast<std::int32_t>(std::ceil(hit.Y * 8.0)) - 1;  // one exactly on a boundary: the one under it
+				for (auto gx = cx * 2; gx < cx * 2 + 2; ++gx) {
+					for (auto gz = cz * 2; gz < cz * 2 + 2; ++gz) {
+						SetSub(guardScratch_, gx, top, gz);
+					}
+				}
+				++hits_;
 			}
 		}
 
@@ -533,60 +1118,6 @@ namespace cybercraft
 		}
 	}
 
-	void Collision::MarkSurface(Regions& a_into, double a_mcX, double a_mcZ, double a_surfaceY, const RED4ext::Vector4& a_normal)
-	{
-		// A sample stands for the whole cell around it (half a sample spacing each way), not just
-		// the 1/8-block column it was cast down: one column per sample left a road 4 columns in 64
-		// solid, so the player stood on it but arrows, snowballs and dropped items fell through.
-		// The cell follows the surface's slope at 1/8 resolution, not a flat step per sample.
-		const auto half = 0.5 / Config().samplesPerBlock;
-		const auto ny = static_cast<double>(a_normal.Y);
-		if (std::abs(ny) < 0.2) {
-			// Grazing a near-vertical face: its slope says nothing about the cell. The horizontal
-			// probes find these.
-			rule_ = "grazed face (a down ray's hit on something near vertical)";
-			MarkSpan(a_into, a_mcX, a_mcZ, a_surfaceY - 0.25, a_surfaceY - kEps);
-			return;
-		}
-		const auto [gx0, gx1] = SubRange(a_mcX, half);
-		const auto [gz0, gz1] = SubRange(a_mcZ, half);
-		for (auto gx = gx0; gx <= gx1; ++gx) {
-			for (auto gz = gz0; gz <= gz1; ++gz) {
-				const auto dx = (gx + 0.5) / 8.0 - a_mcX;
-				const auto dz = (gz + 0.5) / 8.0 - a_mcZ;
-				const auto rise = std::clamp(-(a_normal.X * dx + a_normal.Z * dz) / ny, -2.0 * half, 2.0 * half);
-				const auto top = a_surfaceY + rise;
-				MarkSub(a_into, gx, gz, top - 0.25, top - kEps);
-			}
-		}
-	}
-
-	void Collision::MarkWall(int a_axis, double a_across, const RED4ext::Vector4& a_hit, const RED4ext::Vector4& a_normal, double a_y0, double a_y1)
-	{
-		// The hit sits on the face, which rounds to the air sub-voxel in front of it: step along
-		// -normal so the solid side is what gets marked.
-		constexpr double kIn = 0.0625;
-		const double     along = a_axis == 0 ? a_normal.X : a_normal.Z;
-		const double     across = a_axis == 0 ? a_normal.Z : a_normal.X;
-		if (std::abs(along) < 0.5) {
-			// Nearly parallel to the probe: the probes along the other axis see this face square on.
-			MarkSpan(regions_, a_hit.X - a_normal.X * kIn, a_hit.Z - a_normal.Z * kIn, a_y0, a_y1);
-			return;
-		}
-		// As with floors, the hit stands for the sample's cell across the probe, the face carried
-		// on along its own plane.
-		const auto half = 0.5 / Config().samplesPerBlock;
-		const double hitAlong = a_axis == 0 ? a_hit.X : a_hit.Z;
-		const auto [g0, g1] = SubRange(a_across, half);
-		for (auto g = g0; g <= g1; ++g) {
-			const auto pAcross = (g + 0.5) / 8.0;
-			const auto pAlong = hitAlong + std::clamp(-across * (pAcross - a_across) / along, -2.0 * half, 2.0 * half);
-			const auto solidAlong = pAlong - along * kIn;
-			const auto solidAcross = pAcross - across * kIn;
-			MarkSpan(regions_, a_axis == 0 ? solidAlong : solidAcross, a_axis == 0 ? solidAcross : solidAlong, a_y0, a_y1);
-		}
-	}
-
 	std::pair<std::int32_t, std::int32_t> Collision::SubRange(double a_centre, double a_half)
 	{
 		// Sub-voxel g spans [g/8, (g+1)/8); it's in the cell if its centre is in [centre - half,
@@ -596,38 +1127,6 @@ namespace cybercraft
 		return { lo, std::max(lo, hi) };
 	}
 
-	void Collision::MarkSpan(Regions& a_into, double a_mcX, double a_mcZ, double a_y0, double a_y1)
-	{
-		MarkSub(a_into, FloorI(a_mcX * 8.0), FloorI(a_mcZ * 8.0), a_y0, a_y1);
-	}
-
-	void Collision::MarkSub(Regions& a_into, std::int32_t a_gx, std::int32_t a_gz, double a_y0, double a_y1)
-	{
-		if (a_y1 < a_y0) {
-			return;
-		}
-		const auto bx = FloorDiv(a_gx, 8);
-		const auto bz = FloorDiv(a_gz, 8);
-		const auto bit = 1ull << ((a_gz - bz * 8) * 8 + (a_gx - bx * 8));
-		const auto rx = FloorDiv(bx, kRegionSize);
-		const auto rz = FloorDiv(bz, kRegionSize);
-
-		const auto gyLo = FloorI(a_y0 * 8.0);
-		const auto gyHi = FloorI(a_y1 * 8.0);
-		for (auto gy = gyLo; gy <= gyHi; ++gy) {
-			const auto by = FloorDiv(gy, 8);
-			if (by < yMin_ || by > yMax_) {
-				continue;  // outside the window this sweep promised Minecraft
-			}
-			const auto ry = FloorDiv(by, kRegionSize);
-			auto&      region = a_into[RegionKey(rx, ry, rz)];
-			const auto local = static_cast<std::uint32_t>((bx - rx * kRegionSize) + kRegionSize * ((by - ry * kRegionSize) + kRegionSize * (bz - rz * kRegionSize)));
-			region.blocks[local][gy - by * 8] |= bit;
-			if (explain_ && bx == (*explain_)[0] && by == (*explain_)[1] && bz == (*explain_)[2]) {
-				++explainCounts_[rule_];
-			}
-		}
-	}
 
 	bool Collision::SentSolid(double a_x, double a_y, double a_z) const
 	{
@@ -700,6 +1199,7 @@ namespace cybercraft
 		// lost the water under the player until the sweep came back to it, and dropped out of
 		// swimming every few blocks.
 		std::array<float, proto::kWaterGridSize * proto::kWaterGridSize> moved;
+		std::array<bool, proto::kWaterGridSize * proto::kWaterGridSize>  sampled{};
 		moved.fill(proto::kNoWater);
 		if (!a_clear) {
 			for (int gz = 0; gz < size; ++gz) {
@@ -708,11 +1208,13 @@ namespace cybercraft
 					const auto oz = gz + originZ - water_.originZ;
 					if (ox >= 0 && oz >= 0 && ox < size && oz < size) {
 						moved[gz * size + gx] = water_.surface[oz * size + ox];
+						sampled[gz * size + gx] = waterSampled_[oz * size + ox];
 					}
 				}
 			}
 		}
 		std::copy(moved.begin(), moved.end(), std::begin(water_.surface));
+		waterSampled_ = sampled;
 		water_.originX = originX;
 		water_.originZ = originZ;
 		waterDirty_ = true;
@@ -740,6 +1242,72 @@ namespace cybercraft
 		return level;
 	}
 
+	void Collision::SampleWater(int& a_budget, std::chrono::steady_clock::time_point a_deadline)
+	{
+		// The grid's columns by distance from its middle (where the player is), worked out once.
+		constexpr int size = int(proto::kWaterGridSize);
+		static const auto order = [] {
+			std::array<int, size * size> cells{};
+			for (int i = 0; i < size * size; ++i) {
+				cells[i] = i;
+			}
+			std::sort(cells.begin(), cells.end(), [](int a_lhs, int a_rhs) {
+				const auto d = [](int a_cell) {
+					const double dx = a_cell % size + 0.5 - size / 2.0, dz = a_cell / size + 0.5 - size / 2.0;
+					return dx * dx + dz * dz;
+				};
+				return d(a_lhs) < d(a_rhs);
+			});
+			return cells;
+		}();
+		for (const auto cell : order) {
+			if (waterSampled_[cell]) {
+				continue;
+			}
+			if (a_budget <= 0 || std::chrono::steady_clock::now() >= a_deadline) {
+				return;
+			}
+			waterSampled_[cell] = true;
+			const double x = water_.originX + cell % size + 0.5, z = water_.originZ + cell / size + 0.5;
+			a_budget -= WaterColumn(x, z, yMax_ + 1.0, static_cast<double>(yMin_));
+		}
+	}
+
+	int Collision::WaterColumn(double a_mcX, double a_mcZ, double a_top, double a_bottom)
+	{
+		int    rays = 1;
+		double surfaceY = 0.0;
+		if (WaterSurface({ a_mcX, a_top, a_mcZ }, { a_mcX, a_bottom, a_mcZ }, surfaceY)) {
+			RecordWater(a_mcX, a_mcZ, surfaceY);
+			return rays;
+		}
+		// The city's own water surfaces are static bodies of a water material (the box queries leave
+		// them out): down through what's over it, a surface at a time.
+		static const std::vector<RED4ext::CName> groups = GroupList(Config().group);
+		RED4ext::Vector4                         hit{};
+		RED4ext::Vector4                         normal{};
+		RED4ext::CName                           material{};
+		double                                   from = a_top;
+		for (int pass = 0; pass < 12 && from > a_bottom; ++pass) {
+			++rays;
+			bool inside = false;
+			if (!RaycastGroups(groups, true, { a_mcX, from, a_mcZ }, { a_mcX, a_bottom, a_mcZ }, hit, normal, material, &inside)) {
+				break;
+			}
+			if (inside) {
+				from -= 0.5;  // started inside a solid: on down through it
+				continue;
+			}
+			if (IsWater(material)) {
+				++waterHits_;
+				RecordWater(a_mcX, a_mcZ, hit.Y);
+				break;
+			}
+			from = hit.Y - 0.05;
+		}
+		return rays;
+	}
+
 	bool Collision::WaterSurface(const McVec& a_from, const McVec& a_to, double& a_surfaceY)
 	{
 		static rtti::Method        sync{ "gameSpatialQueriesSystem", "SyncRaycastByCollisionGroup" };
@@ -756,7 +1324,6 @@ namespace cybercraft
 		bool                          hit = false;
 		bool                          staticOnly = false;
 		bool                          dynamicOnly = false;
-		++sweepRays_;
 		if (!sync.Call(system, &hit, fromV, toV, kWater, result, staticOnly, dynamicOnly) || !hit || !IsWater(result.material)) {
 			return false;
 		}
@@ -775,20 +1342,22 @@ namespace cybercraft
 		Link::Get().WriteWaterGrid(water_);
 	}
 
-	void Collision::Flush(const Column& a_column)
+	void Collision::Flush(const Job& a_job)
 	{
-		const auto ryLo = FloorDiv(yMin_, kRegionSize);
-		const auto ryHi = FloorDiv(yMax_, kRegionSize);
-		for (auto ry = ryLo; ry <= ryHi; ++ry) {
-			const auto key = RegionKey(a_column.rx, ry, a_column.rz);
-			Region     sweep;
-			if (const auto found = regions_.find(key); found != regions_.end()) {
-				sweep = std::move(found->second);
-				regions_.erase(found);
-			}
-			SendRegion(key, a_column.rx, ry, a_column.rz, &sweep);
-			sent_[key] = std::move(sweep);
+		const auto key = RegionKey(a_job.rx, a_job.ry, a_job.rz);
+		Region     sweep;
+		if (const auto found = regions_.find(key); found != regions_.end()) {
+			sweep = std::move(found->second);
 		}
+		regions_.clear();
+		SendRegion(key, a_job.rx, a_job.ry, a_job.rz, &sweep);
+		sent_[key] = std::move(sweep);
+		if (movingFound_.empty()) {
+			moving_.erase(key);
+		} else {
+			moving_[key] = std::move(movingFound_);
+		}
+		movingFound_.clear();
 	}
 
 	void Collision::SendRegion(std::uint64_t a_key, std::int32_t a_rx, std::int32_t a_ry, std::int32_t a_rz, const Region* a_sweep)
@@ -936,7 +1505,7 @@ namespace cybercraft
 					floor = std::min(roof, static_cast<double>(hit.Y));
 				}
 				++vehicleCells_;
-				// The sample stands for its whole cell, as the city's surfaces do (MarkSurface).
+				// The sample stands for its whole cell, so cars are continuous to arrows and items too.
 				const auto [gx0, gx1] = SubRange(x, 0.5 * step);
 				const auto [gz0, gz1] = SubRange(z, 0.5 * step);
 				for (auto gx = gx0; gx <= gx1; ++gx) {
@@ -1080,6 +1649,7 @@ namespace cybercraft
 			logger::info("cityprobe:   no gameSpatialQueriesSystem (no save loaded)");
 			return;
 		}
+		spatial_ = system;
 		// Collision groups by name only (an unknown preset name crashed the game; groups don't).
 		static constexpr std::array<const char*, 12> kGroups{ "Static", "Terrain", "Dynamic", "Destructible", "DestructibleCluster", "Collider", "Debris",
 			"PlayerBlocker", "VehicleBlocker", "NPCBlocker", "Vehicle", "Water" };
@@ -1088,23 +1658,24 @@ namespace cybercraft
 
 		// Is anything of each group inside the block? A box a little smaller than it (0.45 of a block,
 		// whether the game takes that as half or whole extents), unturned.
-		const auto       size = static_cast<float>(0.45 * mpb);
-		RED4ext::Vector4 dimension{ size, size, size, 0.0f };
-		RED4ext::Vector4 position{ centre.x, centre.y, centre.z, 1.0f };
+		const auto           size = static_cast<float>(0.45 * mpb);
+		RED4ext::Vector4     dimension{ size, size, size, 0.0f };
+		RED4ext::Vector4     position{ centre.x, centre.y, centre.z, 1.0f };
 		RED4ext::EulerAngles rotation{};
 		for (const auto* name : kGroups) {
 			RED4ext::CName                group(name);
 			RED4ext::physics::TraceResult result{};
 			bool                          hit = false;
 			const bool                    called = overlap.Call(system, &hit, dimension, position, rotation, group, result);
-			const auto*                   material = result.material.ToString();
-			logger::info("cityprobe:   box {:.2f} m, {}: {}{}", size, name, !called ? "call failed" : hit ? "SOLID" : "empty",
-				hit ? std::format(" (material {}, at ({:.2f}, {:.2f}, {:.2f}))", material ? material : "?", result.position.X, result.position.Y, result.position.Z)
-					: std::string{});
+			if (called && !hit) {
+				continue;  // only what's there
+			}
+			logger::info("cityprobe:   box {:.2f} m, {}: {}{}", size, name, !called ? "call failed" : "SOLID",
+				hit ? std::format(" (material {})", MaterialName(result.material)) : std::string{});
 		}
 
 		// Rays through the block's centre, from a block before it to a block past it: what each group
-		// has there, static bodies only (as the sweep asks) and moving ones too.
+		// has there, static bodies only and moving ones too.
 		struct Line
 		{
 			const char*      what;
@@ -1128,13 +1699,12 @@ namespace cybercraft
 						continue;
 					}
 					++hits;
-					const auto  dx = result.position.X - line.from.X, dy = result.position.Y - line.from.Y, dz = result.position.Z - line.from.Z;
-					const auto  along = std::sqrt(dx * dx + dy * dy + dz * dz);
-					const auto* material = result.material.ToString();
+					const auto dx = result.position.X - line.from.X, dy = result.position.Y - line.from.Y, dz = result.position.Z - line.from.Z;
+					const auto along = std::sqrt(dx * dx + dy * dy + dz * dz);
 					// The block spans 1 to 2 blocks along the line.
 					logger::info("cityprobe:   ray {}, {} ({}): hit {:.2f} blocks along ({}), normal ({:.2f}, {:.2f}, {:.2f}), material {}", line.what, name,
 						staticOnly ? "static bodies" : "all bodies", along / mpb, along / mpb < 1.0 ? "before the block" : along / mpb <= 2.0 ? "IN the block" : "past it",
-						result.normal.X, result.normal.Y, result.normal.Z, material ? material : "?");
+						result.normal.X, result.normal.Y, result.normal.Z, MaterialName(result.material));
 				}
 			}
 			if (hits == 0) {
@@ -1142,33 +1712,71 @@ namespace cybercraft
 			}
 		}
 
-		// Which of the sweep's rules make it solid: its columns and the ones round it scanned again
-		// (wall probes reach into the next block), every ray of its own columns logged.
-		auto saved = std::move(regions_);
-		regions_.clear();
-		explain_ = std::array<std::int32_t, 3>{ bx, by, bz };
-		explainCounts_.clear();
-		const auto spb = Config().samplesPerBlock;
-		const auto step = 1.0 / spb;
-		for (int i = -spb; i < 2 * spb; ++i) {
-			for (int j = -spb; j < 2 * spb; ++j) {
-				const double x = bx + (i + 0.5) * step, z = bz + (j + 0.5) * step;
-				explainRays_ = i >= 0 && i < spb && j >= 0 && j < spb;
-				if (explainRays_) {
-					logger::info("cityprobe:   the sweep's column at ({:.3f}, {:.3f}):", x, z);
-				}
-				ScanColumn(x, z);
+		// The sweep's own scan of the block, every query logged: its octree from the block down, then
+		// each solid cell's faces.
+		if (dimension_ == Dimension::kUnknown) {
+			logger::info("cityprobe:   the sweep's box queries aren't worked out yet (see \"collision: no sweep yet\")");
+			return;
+		}
+		auto       savedCells = std::move(cells_);
+		const auto savedKnown = known_;
+		cells_.clear();
+		known_ = { bx * kCellsPerBlock, by * kCellsPerBlock, bz * kCellsPerBlock, (bx + 1) * kCellsPerBlock, (by + 1) * kCellsPerBlock,
+			(bz + 1) * kCellsPerBlock };
+		std::unordered_map<std::uint64_t, RED4ext::CName> found;
+		std::vector<Node>                                 stack{ Node{ bx * kCellsPerBlock, by * kCellsPerBlock, bz * kCellsPerBlock, kCellsPerBlock } };
+		if (Builds::Filled(bx, by, bz, bx + 1, by + 1, bz + 1)) {
+			logger::info("cityprobe:   it's one of the player's placed blocks: the sweep leaves it out");
+			stack.clear();
+		}
+		while (!stack.empty()) {
+			const auto node = stack.back();
+			stack.pop_back();
+			RED4ext::CName material{};
+			const bool     hit = OverlapsNode(node, &material);
+			if (node.size > 1 || hit) {
+				logger::info("cityprobe:     box of {} cells at ({}, {}, {}): {}", node.size, node.x, node.y, node.z,
+					hit ? std::format("SOLID ({})", MaterialName(material)) : std::string("empty"));
 			}
+			if (!hit) {
+				continue;
+			}
+			if (node.size > 1) {
+				const auto half = node.size / 2;
+				for (int i = 0; i < 8; ++i) {
+					stack.push_back({ node.x + (i & 1) * half, node.y + ((i >> 1) & 1) * half, node.z + ((i >> 2) & 1) * half, half });
+				}
+				continue;
+			}
+			if (material == OwnMaterial()) {
+				const McVec lo{ node.x * kCell + kPad, node.y * kCell + kPad, node.z * kCell + kPad };
+				const McVec hi{ (node.x + 1) * kCell - kPad, (node.y + 1) * kCell - kPad, (node.z + 1) * kCell - kPad };
+				const bool  again = Overlaps(lo, hi, &material);
+				logger::info("cityprobe:       one of the player's colliders; a hair smaller: {}", again ? MaterialName(material) : "empty");
+				if (!again || material == OwnMaterial()) {
+					continue;
+				}
+			}
+			if (IsWater(material) || (bodyMaterial_ != RED4ext::CName() && material == bodyMaterial_)) {
+				continue;
+			}
+			cells_.insert(CellKey(node.x, node.y, node.z));
+			found[CellKey(node.x, node.y, node.z)] = material;
 		}
-		explainRays_ = false;
-		explain_.reset();
-		regions_ = std::move(saved);
-		if (explainCounts_.empty()) {
-			logger::info("cityprobe:   no rule of the sweep makes this block solid now");
+		explain_ = true;
+		int subs = 0;
+		for (const auto& [key, material] : found) {
+			const auto x = Unpack21(key >> 42), y = Unpack21(key >> 21), z = Unpack21(key);
+			int        rays = 0;
+			const auto bits = Carve(x, y, z, rays);
+			subs += std::popcount(bits);
+			logger::info("cityprobe:   cell ({}, {}, {}) of {}: {} of its 8 sub-voxels solid ({:08b}, bit x + 2z + 4y)", x, y, z, MaterialName(material),
+				std::popcount(bits), bits);
 		}
-		for (const auto& [rule, count] : explainCounts_) {
-			logger::info("cityprobe:   {} sub-voxel marks from: {}", count, rule);
-		}
+		explain_ = false;
+		cells_ = std::move(savedCells);
+		known_ = savedKnown;
+		logger::info("cityprobe:   the sweep makes {} of its 64 cells solid, {} of 512 sub-voxels (the faces trimmed with the block alone known)", found.size(), subs);
 	}
 
 	std::optional<double> Collision::FirstHitY(const McVec& a_from, const McVec& a_to)
@@ -1225,25 +1833,13 @@ namespace cybercraft
 		// sGroup is a comma-separated list ("Static,Terrain"): the city and the ground under it are
 		// separate groups, and the nearest hit of any of them wins.
 		static const std::vector<RED4ext::CName> groups = GroupList(Config().group);
-		++sweepRays_;
 		if (!RaycastGroups(groups, true, a_from, a_to, a_hit, a_normal, a_material, a_inside)) {
-			if (explainRays_) {
-				logger::info("cityprobe:     ray ({:.3f}, {:.3f}, {:.3f}) to ({:.3f}, {:.3f}, {:.3f}): nothing", a_from.x, a_from.y, a_from.z, a_to.x, a_to.y, a_to.z);
-			}
 			return false;
-		}
-		if (explainRays_) {
-			const auto* material = a_material.ToString();
-			const double dx = a_hit.X - a_from.x, dy = a_hit.Y - a_from.y, dz = a_hit.Z - a_from.z;
-			logger::info("cityprobe:     ray ({:.3f}, {:.3f}, {:.3f}) to ({:.3f}, {:.3f}, {:.3f}): hit ({:.3f}, {:.3f}, {:.3f}) {:.3f} blocks on, normal ({:.2f}, {:.2f}, {:.2f}){} material {}",
-				a_from.x, a_from.y, a_from.z, a_to.x, a_to.y, a_to.z, a_hit.X, a_hit.Y, a_hit.Z, std::sqrt(dx * dx + dy * dy + dz * dz), a_normal.X, a_normal.Y,
-				a_normal.Z, a_inside && *a_inside ? " STARTED INSIDE a solid" : "", material ? material : "?");
 		}
 		if (a_inside && *a_inside) {
 			return true;  // not a surface
 		}
 		++hits_;
-		++sweepHits_;
 		return true;
 	}
 

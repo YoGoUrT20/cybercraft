@@ -41,8 +41,11 @@ ByteAddressBuffer visibility : register(t1);
 Texture2D<float> sceneDepth : register(t2);
 Texture2D sceneColor : register(t3);
 // The cells dug out of Night City round the camera (kRenDug), a bit each: 128 x 64 x 128 from dug.xyz,
-// x fastest (4 words a row), then y, then z.
+// x fastest (4 words a row), then y, then z. After the bits, how many of them keep a floor, then
+// those (sorted): the cell's index (x + 128 (y + 64 z)) << 4 | the eighths of it that stay.
 ByteAddressBuffer dugCells : register(t4);
+static const uint kDugFloorsAt = 128 * 64 * 4 * 4;
+static const uint kMaxDugFloors = 4096;
 // Cyberpunk's finished picture at full size (without its HUD when the game hands that over), for
 // painting the backdrop of what was dug away (Backdrop).
 Texture2D scenePicture : register(t5);
@@ -160,15 +163,54 @@ float4 PSDown(float4 pos : SV_Position) : SV_Target {
 	}
 	return float4(sum / 64.0, 1);
 }
-bool Dug(float3 p) {
+// Whether the cell p is in was dug (all of it, kept floor or not); its index in the window.
+bool DugCell(float3 p, out int3 k) {
 	// Clamped into the window before the read, whatever the test says: the compiler reads first and
 	// picks after, and dugCells is a root view with no bounds of its own. A read far past it (the
 	// sky's depth puts p a long way off) took the GPU down.
 	int3 c = int3(clamp(floor(p) - dug.xyz, -1.0, 256.0));
 	bool inside = all(c >= 0) && c.x < 128 && c.y < 64 && c.z < 128;
-	int3 k = clamp(c, int3(0, 0, 0), int3(127, 63, 127));
+	k = clamp(c, int3(0, 0, 0), int3(127, 63, 127));
 	uint word = dugCells.Load(((k.z * 64 + k.y) * 4 + (k.x >> 5)) * 4);
 	return inside && ((word >> (k.x & 31)) & 1) != 0;
+}
+// Seen where the game's picture was cut (at a_cut, on what was dug away), whether this point shows:
+// close behind what was dug (two blocks), or down the hole, the sight line from a_cut to it in dug
+// cells all the way (but the last bit, the face it lands on). Not what's far beyond a chair dug away,
+// nor another hole behind it: whatever stood behind the chair hid them.
+bool ThroughHole(float3 a_cut, float3 a_world) {
+	float3 d = a_world - a_cut;
+	float  len = length(d);
+	if (len < 2.0) return true;
+	float3 step = d / len * 0.5;
+	int    n = min(int((len - 0.75) / 0.5), 96);
+	float3 p = a_cut + step;
+	int3   k;
+	[loop] for (int s = 0; s < n; ++s) {
+		if (!DugCell(p, k)) return false;
+		p += step;
+	}
+	return true;
+}
+bool Dug(float3 p) {
+	int3 k;
+	bool cut = DugCell(p, k);
+	[branch] if (cut) {
+		// The floor something standing free stood on stays: only what's over it is cut.
+		uint cell = uint((k.z * 64 + k.y) * 128 + k.x);
+		uint lo = 0, hi = min(dugCells.Load(kDugFloorsAt), kMaxDugFloors);
+		[loop] for (int s = 0; s < 13 && lo < hi; ++s) {
+			uint mid = (lo + hi) >> 1;
+			uint e = dugCells.Load(kDugFloorsAt + 4 + mid * 4);
+			if ((e >> 4) == cell) {
+				cut = (p.y - floor(p.y)) * 8.0 >= float(e & 15);
+				break;
+			}
+			if ((e >> 4) < cell) lo = mid + 1;
+			else hi = mid;
+		}
+	}
+	return cut;
 }
 // Whether what the game drew at this pixel was dug out of the city: it's gone there, and the hole's
 // walls and floor behind it show. It lies on this pixel's sight line at the game's depth. The game's
@@ -235,6 +277,26 @@ float3 Backdrop(float2 pixel, float behind) {
 	}
 	return weights > 0 ? sum / weights : SceneLight(pixel * light.zw);
 }
+)"  // MSVC takes string literals up to 16 KB: the rest of the shader is the next one
+		                     R"(
+// Bit 9 (with a face normal): the End's portal or a gateway, as Minecraft draws it, a window onto
+// the stars: layers of them fixed in the direction they're seen, over a near-black teal.
+float3 EndPortal(float3 world) {
+	float3 d = normalize(world - eye.xyz);
+	float3 color = float3(0.015, 0.04, 0.05);
+	[unroll] for (int l = 0; l < 4; ++l) {
+		float  scale = 14.0 + l * 9.0;
+		float3 a = abs(d);
+		float2 uv = (a.y >= max(a.x, a.z) ? d.xz / a.y : a.x >= a.z ? d.zy / a.x : d.xy / a.z) * scale + l * 17.3;
+		float2 cell = floor(uv);
+		float  h = frac(sin(dot(cell, float2(127.1, 311.7)) + l * 3.1) * 43758.5453);
+		float2 at = float2(frac(h * 13.7), frac(h * 7.3)) * 0.6 + 0.2;
+		float  star = smoothstep(0.14, 0.0, length(frac(uv) - at)) * step(0.6, h);
+		float3 tint = lerp(float3(0.35, 0.95, 0.85), float3(0.55, 0.45, 1.0), frac(h * 5.1));
+		color += star * tint * (1.0 - l * 0.18);
+	}
+	return color;
+}
 float4 PSMain(VSOut i) : SV_Target {
 	// Bit 8 (with a face normal): a backdrop, a side of a dug cell where something stood free. Drawn
 	// only where the game's picture is cut, from the side the camera looks at from inside the cell.
@@ -249,7 +311,13 @@ float4 PSMain(VSOut i) : SV_Target {
 		float sceneZ = SceneViewZ(i.pos.xy);
 		[branch] if (viewZ > sceneZ * 1.003 + 0.03) {
 			if (!Cut(i.world, viewZ, sceneZ)) discard;  // something of the game's is in front
+			// It was dug away: the hole shows, and what's just behind what stood there, but not what's
+			// far beyond (seen past a chair dug away, whatever stood behind the chair hid it).
+			if (!ThroughHole(eye.xyz + (i.world - eye.xyz) * (sceneZ / max(viewZ, 1e-4)), i.world)) discard;
 		}
+	}
+	if ((i.flags & 0x200) != 0 && ((i.flags >> 4) & 7) != 7) {
+		return float4(EndPortal(i.world), 1.0);
 	}
 	// Bit 3: full detail. Particles and entities cut small pieces out of atlas sprites (a crumb of
 	// a block, a shard of a potion bottle), which the atlas's smaller mips blur into their
@@ -515,12 +583,20 @@ float4 PSOver(float4 pos : SV_Position) : SV_Target {
 		// The cells dug out of Night City (kRenDug), by section (SectionKey): where the blocks' shader
 		// cuts the city out of the picture, and the face rays look through it. Written on the render
 		// thread, read on the game thread too (DugAt).
-		std::mutex                                                       dugMutex;
-		std::unordered_map<std::uint64_t, std::array<std::uint64_t, 64>> dugSections;
+		std::mutex dugMutex;
+		struct DugSection
+		{
+			std::array<std::uint64_t, 64> bits;
+			std::vector<std::uint16_t>    floors;  // RenDug's: bit | eighths that stay << 12
+		};
+		std::unordered_map<std::uint64_t, DugSection> dugSections;
 		std::uint64_t                                                    dugVersion = 0;
 		// What the shader reads: the dug cells in a window round the camera (render thread only),
 		// a bit each, kDugWords per row of kDugW cells along x, rows by y then z.
 		constexpr int              kDugW = 128, kDugH = 64, kDugWords = kDugW / 32;
+		// After the bits: a count, then up to kMaxDugFloors floors that stay (the shader's dugCells).
+		constexpr std::size_t      kDugBitWords = std::size_t(kDugWords) * kDugH * kDugW, kMaxDugFloors = 4096;
+		constexpr std::size_t      kDugBufferWords = kDugBitWords + 1 + kMaxDugFloors;
 		std::vector<std::uint32_t> dugWindow;
 		std::int32_t               dugOrigin[3]{};
 		std::uint64_t              dugWindowVersion = ~0ull;
@@ -544,14 +620,23 @@ float4 PSOver(float4 pos : SV_Position) : SV_Target {
 			}
 			dugWindowVersion = dugVersion;
 			std::memcpy(dugOrigin, origin, sizeof(origin));
-			dugWindow.assign(std::size_t(kDugWords) * kDugH * kDugW, 0u);
+			dugWindow.assign(kDugBufferWords, 0u);
 			dugAny = false;
-			constexpr std::uint64_t mask = (1ull << 21) - 1;
-			for (const auto& [key, bits] : dugSections) {
+			std::vector<std::uint32_t> floors;
+			constexpr std::uint64_t    mask = (1ull << 21) - 1;
+			for (const auto& [key, section] : dugSections) {
+				const auto&        bits = section.bits;
 				const std::int32_t sx = SectionCoord((key >> 42) & mask), sy = SectionCoord((key >> 21) & mask), sz = SectionCoord(key & mask);
 				const std::int32_t wx = sx * 16 - origin[0];
 				if (wx < 0 || wx + 16 > kDugW) {
 					continue;
+				}
+				for (const auto floor : section.floors) {
+					const int          bit = floor & 0xFFF;
+					const std::int32_t cx = wx + (bit & 15), cy = sy * 16 + (bit >> 8) - origin[1], cz = sz * 16 + ((bit >> 4) & 15) - origin[2];
+					if (cy >= 0 && cy < kDugH && cz >= 0 && cz < kDugW) {
+						floors.push_back(std::uint32_t((cz * kDugH + cy) * kDugW + cx) << 4 | (floor >> 12));
+					}
 				}
 				for (int y = 0; y < 16; ++y) {
 					const std::int32_t wy = sy * 16 + y - origin[1];
@@ -573,6 +658,10 @@ float4 PSOver(float4 pos : SV_Position) : SV_Target {
 					}
 				}
 			}
+			std::sort(floors.begin(), floors.end());
+			const auto kept = std::min(floors.size(), kMaxDugFloors);
+			dugWindow[kDugBitWords] = std::uint32_t(kept);
+			std::copy_n(floors.begin(), kept, dugWindow.begin() + kDugBitWords + 1);
 			return dugAny;
 		}
 
@@ -865,30 +954,32 @@ float4 PSOver(float4 pos : SV_Position) : SV_Target {
 			}
 		}
 
-		// Minecraft's block outline: its twelve edges as thin bars of a_color (Minecraft's: black,
-		// 40% opaque), a_uv an opaque spot of the atlas for them to be drawn with.
-		void Outline(std::vector<proto::RenVertex>& a_out, const float a_min[3], const float a_max[3], const float a_uv[4], std::uint32_t a_color)
+		// One edge of Minecraft's block outline, a_from to a_to along an axis, as a thin bar of a_color
+		// (Minecraft's: black, 40% opaque), a_uv an opaque spot of the atlas for it to be drawn with.
+		void Edge(std::vector<proto::RenVertex>& a_out, const float a_from[3], const float a_to[3], const float a_uv[4], std::uint32_t a_color)
 		{
 			constexpr float kWidth = 0.008f;  // blocks: a couple of pixels a few blocks off
-			auto            bar = [&](const float a_from[3], int a_axis) {
-				float mn[3], mx[3];
-				for (int k = 0; k < 3; ++k) {
-					mn[k] = a_from[k] - kWidth;
-					mx[k] = a_from[k] + kWidth;
+			float           mn[3], mx[3];
+			for (int k = 0; k < 3; ++k) {
+				mn[k] = std::min(a_from[k], a_to[k]) - kWidth;
+				mx[k] = std::max(a_from[k], a_to[k]) + kWidth;
+			}
+			// corner bits: 1 = +x, 2 = +y, 4 = +z; each face's corners in turn
+			static constexpr int kFaces[6][4] = { { 6, 7, 5, 4 }, { 3, 2, 0, 1 }, { 7, 3, 1, 5 }, { 2, 6, 4, 0 }, { 2, 3, 7, 6 }, { 4, 5, 1, 0 } };
+			for (const auto& face : kFaces) {
+				float q[4][3];
+				for (int c = 0; c < 4; ++c) {
+					q[c][0] = (face[c] & 1) ? mx[0] : mn[0];
+					q[c][1] = (face[c] & 2) ? mx[1] : mn[1];
+					q[c][2] = (face[c] & 4) ? mx[2] : mn[2];
 				}
-				mx[a_axis] = a_from[a_axis] + (a_max[a_axis] - a_min[a_axis]) + kWidth;
-				// corner bits: 1 = +x, 2 = +y, 4 = +z; each face's corners in turn
-				static constexpr int kFaces[6][4] = { { 6, 7, 5, 4 }, { 3, 2, 0, 1 }, { 7, 3, 1, 5 }, { 2, 6, 4, 0 }, { 2, 3, 7, 6 }, { 4, 5, 1, 0 } };
-				for (const auto& face : kFaces) {
-					float q[4][3];
-					for (int c = 0; c < 4; ++c) {
-						q[c][0] = (face[c] & 1) ? mx[0] : mn[0];
-						q[c][1] = (face[c] & 2) ? mx[1] : mn[1];
-						q[c][2] = (face[c] & 4) ? mx[2] : mn[2];
-					}
-					Quad(a_out, q, a_uv, a_color, kFlagTranslucent);
-				}
-			};
+				Quad(a_out, q, a_uv, a_color, kFlagTranslucent);
+			}
+		}
+
+		// Minecraft's outline of a box: its twelve edges.
+		void Outline(std::vector<proto::RenVertex>& a_out, const float a_min[3], const float a_max[3], const float a_uv[4], std::uint32_t a_color)
+		{
 			for (int axis = 0; axis < 3; ++axis) {
 				const int a = (axis + 1) % 3, b = (axis + 2) % 3;
 				for (int i = 0; i < 4; ++i) {
@@ -896,7 +987,9 @@ float4 PSOver(float4 pos : SV_Position) : SV_Target {
 					from[axis] = a_min[axis];
 					from[a] = (i & 1) ? a_max[a] : a_min[a];
 					from[b] = (i & 2) ? a_max[b] : a_min[b];
-					bar(from, axis);
+					float to[3] = { from[0], from[1], from[2] };
+					to[axis] = a_max[axis];
+					Edge(a_out, from, to, a_uv, a_color);
 				}
 			}
 		}
@@ -969,6 +1062,11 @@ float4 PSOver(float4 pos : SV_Position) : SV_Target {
 				} else if (e.kind == proto::kWeCrack) {
 					const float mn[3] = { px, py, pz };
 					Box(crackVerts, mn, e.ext, 0.0f, e.uv[0], e.uv[0], e.uv[0], 0, kFlagTranslucent, false);
+				} else if (e.kind == proto::kWeEdge) {
+					// The targeted block's outline, edge by edge: its own shape (a railing's rails), over the cracks.
+					const float from[3] = { px, py, pz };
+					const float to[3] = { px + e.ext[0], py + e.ext[1], pz + e.ext[2] };
+					Edge(crackVerts, from, to, e.uv[0], 0x66000000u);
 				} else if (e.kind == proto::kWeArrow || e.kind == proto::kWeTrident) {
 					// Minecraft arrows face (sin yaw, sin pitch, cos yaw).
 					const float yaw = e.yaw * kPi / 180.0f, pitch = e.pitch * kPi / 180.0f;
@@ -1944,8 +2042,13 @@ float4 PSOver(float4 pos : SV_Position) : SV_Target {
 					const auto      key = SectionKey(header.sx, header.sy, header.sz);
 					std::lock_guard lock(dugMutex);
 					if (header.count > 0 && a_bytes >= sizeof(proto::RenDug) + 512) {
-						auto& bits = dugSections[key];
-						std::memcpy(bits.data(), a_payload + sizeof(proto::RenDug), 512);
+						auto& section = dugSections[key];
+						std::memcpy(section.bits.data(), a_payload + sizeof(proto::RenDug), 512);
+						const std::size_t floors = std::min<std::size_t>(header.floors, (a_bytes - sizeof(proto::RenDug) - 512) / 2);
+						section.floors.resize(floors);
+						if (floors > 0) {
+							std::memcpy(section.floors.data(), a_payload + sizeof(proto::RenDug) + 512, floors * 2);
+						}
 					} else {
 						dugSections.erase(key);
 					}
@@ -2115,7 +2218,7 @@ float4 PSOver(float4 pos : SV_Position) : SV_Target {
 		const auto handAddress = showHand ? DynUpload(g.handVertices.data(), g.handVertices.size() * sizeof(proto::RenVertex), frameUsed) : 0;
 		// Always a whole window's worth behind the root view (empty without a dug cell), so no read
 		// of it can go past its end.
-		static const std::vector<std::uint32_t> noDug(std::size_t(kDugWords) * kDugH * kDugW, 0u);
+		static const std::vector<std::uint32_t> noDug(kDugBufferWords, 0u);
 		const auto& dugCells = dugShown ? dugWindow : noDug;
 		const auto  dugAddress = DynUpload(dugCells.data(), dugCells.size() * sizeof(std::uint32_t), frameUsed);
 		if (!dugAddress || !dugShown) {
@@ -2415,7 +2518,16 @@ float4 PSOver(float4 pos : SV_Position) : SV_Target {
 			return false;
 		}
 		const int bit = (x & 15) + 16 * (z & 15) + 256 * (y & 15);
-		return ((found->second[bit >> 6] >> (bit & 63)) & 1) != 0;
+		if (((found->second.bits[bit >> 6] >> (bit & 63)) & 1) == 0) {
+			return false;
+		}
+		// The floor something standing free stood on stays: only what's over it is gone.
+		for (const auto floor : found->second.floors) {
+			if ((floor & 0xFFF) == bit) {
+				return (a_y - std::floor(a_y)) * 8.0 >= double(floor >> 12);
+			}
+		}
+		return true;
 	}
 
 	void UpdateOcclusion(const McVec& a_eyeMc, int a_budget)

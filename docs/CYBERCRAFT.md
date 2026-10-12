@@ -58,12 +58,25 @@ dev console can poke at the same API live.
 ### No collision stage C
 
 The ideal is walking the host's physics world and voxelizing the real shapes. RED4ext exposes no
-physics world to walk, so the ray casts are the design: down rays per sample
-column with multi-hit (floors, ledges, overhangs, ceilings) plus short horizontal probes at knee,
-waist and head height. Each hit fills its sample's whole cell (half a block square at the
-default two samples per block), so floors and walls are continuous for arrows, items and the
-crosshair; an edge (a kerb, a ledge) can sit up to a quarter block off. Thin geometry (railings,
-grilles, wires) can be missed between samples. `iSamplesPerBlock` trades frame time for fidelity.
+physics world to walk, so the sweep asks it instead: box queries
+(`gameSpatialQueriesSystem::OverlapByQueryFilter`) in an octree, down to quarter-block cells, then
+one ray into each face of a solid cell that has air beside it for where its surface is, to the 1/8
+block. Nothing is solid unless a query found something in it.
+
+Until 0.2.4 the sweep cast rays and guessed the rest: down rays per sample column, horizontal probes
+at knee, waist and head height over the ground, a 2.5-block wall raised over any hit steeper than
+~50°, and each hit filled its sample's whole cell. `/cityprobe` (in Minecraft: look at a block, then
+the command; the plugin logs `cityprobe:` lines) showed what that cost:
+
+- Phantom solids: every probed "floating block" was empty to Cyberpunk in every group, box and rays.
+  Nearly all of them were walls raised over the rounded edge of a ledge, a step's nosing or a
+  sloped metal sheet (steep, so a 2.5-block wall went up into the air above it), the rest a floor's
+  slope carried across its cell.
+- Walk-through: railings and doors aren't static bodies (the rays asked for static only); concrete
+  road barriers are in `Destructible`, not `Static`; a street sign high over the road had no wall
+  probe at its height. Every one of them was in `PlayerBlocker`, which is in the filter now.
+
+What follows is the ray sweep's history, kept for what it found out about Cyberpunk's physics.
 
 V fell through the floor in much of the city, wherever something stood over it: inside buildings,
 under balconies, signs and overpasses. Three things in the sweep let the floor go missing:
@@ -664,15 +677,14 @@ fTakeoverDelay = 5                 ; seconds after the first key press before Mi
 
 [Collision]
 bEnable = 1
-sGroup = Static,Terrain            ; collision groups the rays hit
+sSolidGroups = Static,Terrain,Destructible,PlayerBlocker   ; what's solid (box queries, any body)
+sGroup = Static,Terrain            ; the other rays (ground checks, third-person camera), static bodies
 fRadius = 32                       ; blocks around V
 fUp = 24
 fDown = 24
-iSamplesPerBlock = 2
-iRayBudget = 2000                  ; rays per frame
-iMaxHitsPerColumn = 16             ; surfaces per down ray, top of the window to the bottom
-fSteepNormalY = 0.64               ; steeper than ~50 degrees is a wall
-fWallHeight = 2.5
+iQueryBudget = 2000                ; box queries and rays per frame
+fBudgetMs = 3                      ; and at most this long per frame
+iSamplesPerBlock = 2               ; guard and car rays per block edge
 fRebuildDist = 4                   ; across; up and down a third of the smaller of fUp / fDown
 bGuard = 1                         ; the ground under Minecraft's player, cast and sent every frame
 fGuardDepth = 8                    ; blocks under the feet the guard looks

@@ -905,10 +905,9 @@ public final class CyberDig {
 
 	/**
 	 * What a cell next to a dug one is, from the plugin's voxels, which only show surfaces: PARTIAL
-	 * where the city's surface runs through it; under a surface (within COVER_REACH) a Proto.DIG_*
-	 * material by how deep (dirt, then stone, then bedrock); AIR where there's room to stand on a
-	 * floor right under it, or nothing over it. Whatever is behind a surface is solid ground: Night
-	 * City's rooms under its floors can't be told from earth under its streets.
+	 * where the city's surface runs through it; AIR in the open, with anything of the city a few blocks
+	 * under it (somewhere a player gets to: never a block there) or nothing over it; otherwise, under a
+	 * surface (within COVER_REACH), a Proto.DIG_* material by how deep (dirt, then stone, then bedrock).
 	 */
 	public static int classifyVoxel(int x, int y, int z) {
 		return CityVoxels.classify(x, y, z);
@@ -932,7 +931,7 @@ public final class CyberDig {
 	 * pavement is ground), all of it for a wall's sheet (what's behind it can't be told from voxels).
 	 */
 	public static float partialTop(int x, int y, int z) {
-		return CyberCollision.rawFloor(x, y, z) ? CyberCollision.rawTop(x, y, z) : 1.0F;
+		return CyberCollision.rawFloor(x, y, z) ? CyberCollision.rawFloorTop(x, y, z) : 1.0F;
 	}
 
 	/**
@@ -945,6 +944,19 @@ public final class CyberDig {
 	 */
 	public static boolean freeStanding(int x, int y, int z) {
 		return !CyberCollision.hasTriangles() && CityVoxels.freeStanding(x, y, z, CyberDig::dugHere);
+	}
+
+	/**
+	 * How much of a dug cell stays, in eighths of a block from its bottom (0: none): the floor something
+	 * standing free stood on (a chair, a sun lounger), whose top was in the same cell. Digging the thing
+	 * takes it, not a hole in the floor: Minecraft still stands on that floor, and the plugin only cuts
+	 * what's over it out of the picture. From the plugin's voxels; any thread.
+	 */
+	public static int keptFloor(int x, int y, int z) {
+		if (!CyberCollision.rawFloor(x, y, z) || CyberCollision.rawFloorBottom(x, y, z) > 0.0F || !freeStanding(x, y, z)) {
+			return 0;
+		}
+		return Math.round(CyberCollision.rawFloorTop(x, y, z) * 8.0F);
 	}
 
 	/** The nearest stretch of land (terrain triangles) above a point, within 32 blocks, or null. */

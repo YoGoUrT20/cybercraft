@@ -102,22 +102,44 @@ class FreeStandingTest {
 		put(5, 10, 5, SHEET);
 		put(4, 10, 5, SHEET);
 		put(6, 10, 5, SHEET);
-		put(5, 10, 4, SHEET); // open only south
+		put(5, 10, 4, SHEET);
+		put(5, 10, 6, SHEET); // boxed in: not a thing on its own
 		send();
 		assertFalse(free(5, 10, 5));
 		dig(4, 10, 5);
-		assertTrue(free(5, 10, 5));
+		assertTrue(free(5, 10, 5)); // open on one side now, as a cushion on a sofa is
 	}
 
 	@Test
-	void buildingWallIsNot() throws Exception {
+	void tallThingInTheOpenGoesToo() throws Exception {
 		slab();
 		for (int y = 10; y <= 14; y++) {
-			put(2, y, 2, SHEET);
+			put(2, y, 2, SHEET); // a post, a window's frame: five cells tall, open air all round
 		}
 		send();
-		assertFalse(free(2, 10, 2)); // open on every side, but five cells tall
-		assertFalse(free(2, 14, 2));
+		assertTrue(free(2, 10, 2)); // no earth behind it, so no stone comes with it
+		assertTrue(free(2, 14, 2));
+	}
+
+	@Test
+	void tallWallAgainstTheGroundIsNot() throws Exception {
+		// A wall on a lone floor cell, with ground beside it (under a surface, no floor under it).
+		put(12, 9, 12, FLOOR);
+		for (int y = 10; y <= 13; y++) {
+			put(12, y, 12, SHEET);
+		}
+		put(13, 14, 12, FLOOR); // over (13, 10..13, 12): ground there
+		send();
+		assertFalse(free(12, 11, 12));
+	}
+
+	@Test
+	void chairLegsOnTheFloorsTopGo() throws Exception {
+		slab();
+		long[] legs = { -1L, -1L, 0x81L, 0x81L, 0x81L, 0, 0, 0 }; // the floor's top, two legs over it
+		put(4, 10, 4, legs);
+		send();
+		assertTrue(free(4, 10, 4));
 	}
 
 	@Test

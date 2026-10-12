@@ -23,14 +23,34 @@ final class CityVoxels {
 	private static final double CITY_BEDROCK = 16.0;
 	/** Blocks less far than this under the city's surface are dirt, deeper ones stone. */
 	private static final double CITY_DIRT = 3.5;
+	/**
+	 * A cell over a floor this close under it (blocks), with standing room over that floor (OPEN_ROOM
+	 * cells clear, this one among them), is in the open: a terrace, a room, a street under an overpass.
+	 * A player gets there, so it's never a block, whatever is over it (a ceiling, an awning, a sign, an
+	 * atrium's roof 16 blocks up turned it into bedrock). A gap thinner than that (under a street's
+	 * surface) is ground: blown or dug into, it doesn't open into nothing.
+	 */
+	private static final int OPEN_REACH = 6;
+	private static final int OPEN_ROOM = 2;
 
 	/** CyberDig.classifyVoxel. */
 	static int classify(int x, int y, int z) {
 		if (CyberCollision.rawGeometry(x, y, z)) {
 			return CyberDig.PARTIAL;
 		}
-		if (CyberCollision.rawFloor(x, y - 1, z)) {
-			return CyberDig.AIR;
+		for (int k = 1; k <= OPEN_REACH; k++) {
+			if (CyberCollision.rawGeometry(x, y - k, z)) {
+				if (CyberCollision.rawFloor(x, y - k, z)) {
+					int room = k; // the clear cells over the floor up to this one, this one too
+					for (int up = 1; room < OPEN_ROOM && up < OPEN_ROOM && !CyberCollision.rawGeometry(x, y + up, z); up++) {
+						room++;
+					}
+					if (room >= OPEN_ROOM) {
+						return CyberDig.AIR;
+					}
+				}
+				break;
+			}
 		}
 		for (int k = 1; k <= COVER_REACH; k++) {
 			if (CyberCollision.rawGeometry(x, y + k, z)) {
@@ -43,8 +63,6 @@ final class CityVoxels {
 
 	// ---- what stands free ------------------------------------------------------------------------
 
-	/** How many cells tall a thing standing on a floor can be and still stand free. */
-	private static final int FREE_HEIGHT = 2;
 	private static final int FREE_THING = 1, FREE_OPEN = 1 << 1, FREE_GROUND = 1 << 5; // FREE_OPEN, FREE_GROUND: << side
 	private static final Direction[] SIDES = { Direction.NORTH, Direction.EAST, Direction.SOUTH, Direction.WEST };
 	// Per cell, by section, as worked out from the voxels alone: FREE_THING for a thing standing on a
@@ -62,9 +80,11 @@ final class CityVoxels {
 	}
 
 	/**
-	 * True if what was in this cell stands free in the open: a chair, a bench, a bin, a low wall, a
-	 * parapet's top. It stands on a floor right under it, is no more than FREE_HEIGHT cells tall, and
-	 * has open air (or cells {@code dug} out) beside it on two sides or more and ground on none.
+	 * True if what was in this cell stands free in the open: a chair, a sofa's cushion, a bin, a low
+	 * wall, a parapet's top, a window's frame, a post. It stands on a floor (straight down through the
+	 * rest of it), has open air (or cells {@code dug} out) beside it on a side or more, and ground on
+	 * none: there's no earth behind it, so nothing of stone comes with it. Ground beside it (a hillside,
+	 * the street's rim) or nothing under it (the street's surface, an awning) and it's the city's ground.
 	 */
 	static boolean freeStanding(int x, int y, int z, LongPredicate dug) {
 		if (FREE.size() > 2048) {
@@ -90,7 +110,7 @@ final class CityVoxels {
 				open++;
 			}
 		}
-		return open >= 2;
+		return open >= 1;
 	}
 
 	private static int sides(int x, int y, int z) {
@@ -98,22 +118,19 @@ final class CityVoxels {
 			return 0; // ground under the surface, revealed
 		}
 		// Down to the floor it stands on, through the rest of it...
-		int height = 1;
 		int down = y - 1;
 		while (!CyberCollision.rawFloor(x, down, z)) {
-			if (!CyberCollision.rawGeometry(x, down, z) || ++height > FREE_HEIGHT) {
-				return 0; // over nothing the voxels show (the street's surface, an awning) or part of something tall
+			if (!CyberCollision.rawGeometry(x, down, z) || y - down > COVER_REACH) {
+				return 0; // over nothing the voxels show (the street's surface, an awning)
 			}
 			down--;
 		}
-		// ...up to where the city stops over it...
-		for (int up = y + 1; CyberCollision.rawGeometry(x, up, z); up++) {
-			if (++height > FREE_HEIGHT) {
-				return 0; // a building's wall, a lamp post
-			}
-		}
-		// ...and a floor on a floor is the ground (a pavement on the road), unless it's raised off it (a seat, a table).
-		if (down == y - 1 && CyberCollision.rawFloor(x, y, z) && CyberCollision.rawBottom(x, y, z) + 1.0F - CyberCollision.rawTop(x, down, z) < 0.1F) {
+		// ...and a bare thin floor right on a floor is the ground (a pavement on the road), unless it's
+		// raised off it (a seat, a table), thicker (a cushion on a sofa) or has something on it (a chair's
+		// legs in the same cell as the floor's top).
+		if (down == y - 1 && CyberCollision.rawFloor(x, y, z) && CyberCollision.rawFloorTop(x, y, z) <= 0.5F
+			&& CyberCollision.rawTop(x, y, z) <= CyberCollision.rawFloorTop(x, y, z) + 0.125F && !CyberCollision.rawGeometry(x, y + 1, z)
+			&& CyberCollision.rawFloorBottom(x, y, z) + 1.0F - CyberCollision.rawFloorTop(x, down, z) < 0.1F) {
 			return 0;
 		}
 		int sides = FREE_THING;
@@ -121,7 +138,7 @@ final class CityVoxels {
 			int nx = x + SIDES[i].getStepX(), nz = z + SIDES[i].getStepZ();
 			if (CyberCollision.rawGeometry(nx, y, nz)) {
 				// Only a floor at the very bottom of it (the one the thing stands on) leaves room over it.
-				if (CyberCollision.rawFloor(nx, y, nz) && CyberCollision.rawTop(nx, y, nz) <= 0.25F) {
+				if (CyberCollision.rawFloor(nx, y, nz) && CyberCollision.rawFloorTop(nx, y, nz) <= 0.25F) {
 					sides |= FREE_OPEN << i;
 				}
 				continue;

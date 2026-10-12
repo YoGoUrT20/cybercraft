@@ -266,6 +266,14 @@ public final class WorldExporter {
 						if (state.getRenderShape() == RenderShape.MODEL) {
 							var model = Minecraft.getInstance().getModelManager().getBlockStateModelSet().get(state);
 							blockRenderer.tesselateBlock(MESH, x, y, z, level, pos.immutable(), state, model, state.getSeed(pos));
+						} else if (state.getBlock() instanceof net.minecraft.world.level.block.EndPortalBlock) {
+							// Minecraft draws the End's portal with a shader of its own, no model: its top, three
+							// quarters up, as stars the plugin paints (vertex flag bit 9).
+							MESH.portal(x, y, z, Direction.UP, 0.75F);
+						} else if (state.getBlock() instanceof net.minecraft.world.level.block.EndGatewayBlock) {
+							for (Direction d : Direction.values()) {
+								MESH.portal(x, y, z, d, 1.0F);
+							}
 						}
 					}
 				}
@@ -319,12 +327,28 @@ public final class WorldExporter {
 			// The section's dug cells: the plugin cuts Night City out of its picture there, so the hole's
 			// walls and the blocks in it show.
 			if (dugCount > 0 || DUG.contains(key)) {
+				// And the floors that stay in some of them (CyberDig.keptFloor): only what's over one is cut.
+				FLOORS.clear();
+				if (dugCount > 0) {
+					for (int i = 0; i < 4096; i++) {
+						if ((dug[i >> 6] >>> (i & 63) & 1L) == 0) {
+							continue;
+						}
+						int kept = dev.cybercraft.world.CyberDig.keptFloor(sx * 16 + (i & 15), sy * 16 + (i >> 8), sz * 16 + ((i >> 4) & 15));
+						if (kept > 0) {
+							FLOORS.add((short) (i | Math.min(kept, 8) << 12));
+						}
+					}
+				}
 				ByteBuffer dugHeader = ByteBuffer.allocate(24).order(ByteOrder.LITTLE_ENDIAN).putInt(sx).putInt(sy).putInt(sz).putInt(dugCount)
-					.putInt(dev.cybercraft.client.CyberDigClient.world()).putInt(0).flip();
-				ByteBuffer bits = ByteBuffer.allocate(dugCount > 0 ? 512 : 0).order(ByteOrder.LITTLE_ENDIAN);
+					.putInt(dev.cybercraft.client.CyberDigClient.world()).putInt(FLOORS.size()).flip();
+				ByteBuffer bits = ByteBuffer.allocate(dugCount > 0 ? 512 + 2 * FLOORS.size() : 0).order(ByteOrder.LITTLE_ENDIAN);
 				if (dugCount > 0) {
 					for (long word : dug) {
 						bits.putLong(word);
+					}
+					for (int i = 0; i < FLOORS.size(); i++) {
+						bits.putShort(FLOORS.getShort(i));
 					}
 				}
 				if (!CyberLink.writeRender(Proto.REN_DUG, dugHeader, bits.flip())) {
@@ -528,6 +552,11 @@ public final class WorldExporter {
 		if (blockHit instanceof CyberClip.CyberHitResult city) {
 			int[] cell = dev.cybercraft.world.CyberRay.surfaceCell(city.hit);
 			BlockPos at = new BlockPos(cell[0], cell[1], cell[2]);
+			// The city's own shape in the cell (a railing's rails, a step), as Minecraft outlines a fence.
+			VoxelShape shape = dev.cybercraft.world.CyberCollision.shapeAt(at);
+			if (shape != null && edges(minecraft, shape, at)) {
+				return null;
+			}
 			float top = dev.cybercraft.client.CyberDigClient.height(at);
 			return outline(minecraft, at.getX(), at.getY(), at.getZ(), at.getX() + 1, at.getY() + top, at.getZ() + 1);
 		}
@@ -535,8 +564,44 @@ public final class WorldExporter {
 		if (shape.isEmpty()) {
 			return null;
 		}
+		if (edges(minecraft, shape, pos)) {
+			return null;
+		}
 		AABB box = shape.bounds().move(pos);
 		return outline(minecraft, box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ);
+	}
+
+	private static final it.unimi.dsi.fastutil.shorts.ShortArrayList FLOORS = new it.unimi.dsi.fastutil.shorts.ShortArrayList();
+
+	/** Most edges an outline is drawn with; a shape with more (a slope's steps) gets its bounding box. */
+	private static final int MAX_OUTLINE_EDGES = 72;
+	private static final List<CyberLink.WorldEntity> EDGES = new ArrayList<>();
+
+	/**
+	 * The outline as the shape's own edges, as Minecraft draws it (Proto.WE_EDGE, after the cracks):
+	 * false if it's empty or has too many, for the bounding box instead.
+	 */
+	private static boolean edges(Minecraft minecraft, VoxelShape shape, BlockPos pos) {
+		if (shape.isEmpty()) {
+			return false;
+		}
+		float[] spot = outline(minecraft, 0, 0, 0, 0, 0, 0);
+		if (spot == null) {
+			return false;
+		}
+		float[] uv = { spot[6], spot[7], spot[8], spot[9] };
+		EDGES.clear();
+		shape.forAllEdges((x0, y0, z0, x1, y1, z1) -> {
+			if (EDGES.size() <= MAX_OUTLINE_EDGES) {
+				EDGES.add(new CyberLink.WorldEntity(Proto.WE_EDGE, 0, (float) (pos.getX() + x0), (float) (pos.getY() + y0), (float) (pos.getZ() + z0), 0.0F, 0.0F,
+					1.0F, new float[] { (float) (x1 - x0), (float) (y1 - y0), (float) (z1 - z0) }, uv, 0));
+			}
+		});
+		if (EDGES.isEmpty() || EDGES.size() > MAX_OUTLINE_EDGES || ENTITIES.size() + EDGES.size() > Proto.MAX_WORLD_ENTITIES) {
+			return false;
+		}
+		ENTITIES.addAll(EDGES);
+		return true;
 	}
 
 	private static float @Nullable [] outline(Minecraft minecraft, double x0, double y0, double z0, double x1, double y1, double z1) {
@@ -629,6 +694,27 @@ public final class WorldExporter {
 			int flags = flags(false, normal);
 			for (int k : new int[] { 0, 1, 2, 0, 2, 3 }) {
 				this.vertex(xyz[k * 3], xyz[k * 3 + 1], xyz[k * 3 + 2], uv[k * 2], uv[k * 2 + 1], 0xFFFFFFFF, light, flags);
+			}
+		}
+
+		/**
+		 * One side of an End portal (or gateway) block at (x, y, z), section-relative, the block reaching
+		 * {@code top} up: flag bit 9, no texture: the plugin paints it as the stars Minecraft shows there.
+		 */
+		void portal(int x, int y, int z, Direction side, float top) {
+			float x0 = x, y0 = y, z0 = z, x1 = x + 1, y1 = y + top, z1 = z + 1;
+			float[] xyz = switch (side) {
+				case UP -> new float[] { x0, y1, z0, x0, y1, z1, x1, y1, z1, x1, y1, z0 };
+				case DOWN -> new float[] { x0, y0, z0, x1, y0, z0, x1, y0, z1, x0, y0, z1 };
+				case NORTH -> new float[] { x0, y0, z0, x0, y1, z0, x1, y1, z0, x1, y0, z0 };
+				case SOUTH -> new float[] { x0, y0, z1, x1, y0, z1, x1, y1, z1, x0, y1, z1 };
+				case WEST -> new float[] { x0, y0, z0, x0, y0, z1, x0, y1, z1, x0, y1, z0 };
+				case EAST -> new float[] { x1, y0, z0, x1, y1, z0, x1, y1, z1, x1, y0, z1 };
+			};
+			this.ensure(6 * Proto.REN_VERTEX_BYTES);
+			int flags = flags(false, side) | 0x200;
+			for (int k : new int[] { 0, 1, 2, 0, 2, 3 }) {
+				this.vertex(xyz[k * 3], xyz[k * 3 + 1], xyz[k * 3 + 2], 0.0F, 0.0F, 0xFFFFFFFF, 0xF000F0, flags);
 			}
 		}
 

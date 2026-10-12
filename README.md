@@ -23,25 +23,33 @@ memory. Minecraft runs hidden in the background, and Cyberpunk draws the picture
 ## Features
 
 - **Movement:** Minecraft physics on Night City. Walking, sprinting, jumping, crouching, swimming
-  and falling all collide with the city, which the plugin samples with ray casts around you every
-  few blocks you move.
+  and falling all collide with the city, and the city is what Cyberpunk's own physics says is
+  there: the plugin asks it with box queries around you, nothing guessed. Walls, floors, railings,
+  road barriers, street signs, doors and gates block you as they block V; open a door and walk
+  through it. Parked cars are solid but they're cars, not the city: they can't be dug.
 - **Overlay:** Minecraft's hand, hotbar, health and hunger, inventory and every other Minecraft
   screen, drawn into Cyberpunk's frame (D3D12).
 - **Blocks:** place and break blocks anywhere. They're drawn in the world and hidden behind
   buildings, cars and people. Press **Insert** while standing on a street, facing along it, to snap
   the block grid to it, so blocks sit flush on the pavement and run along the street. The **arrow
-  keys** then fine-tune it a pixel at a time. The grid is saved with your Minecraft world.
+  keys** then fine-tune it a pixel at a time. The grid is saved with your Minecraft world. The
+  outline of the block you look at follows its real shape: a railing's rails, a fence's posts.
+  End portals and gateways show their stars.
 - **Dig into Night City:** mine a street, a pavement or a wall (as hard as deepslate) and a hole opens
   in the city. Cyberpunk's picture is cut away there, and the hole is lined with Minecraft blocks:
-  dirt first, then stone with ores, then bedrock. Jump in and keep digging. Holes stay where you
-  dug them when **Insert**, the arrow keys or the scale move the grid. TNT blows holes too, and
-  stone put back where the street was brings the street back. `/clearnear <radius>` removes every
+  dirt first, then stone with ores, then bedrock. Jump in and keep digging. Things standing on a
+  floor (a chair, a sun lounger, a cushion, a railing, a window's frame) just go when mined: the
+  floor under them stays, and what was behind them is painted in from the picture around. Open air
+  you can walk in never fills with blocks. Holes stay where you dug them when **Insert**, the arrow
+  keys or the scale move the grid. TNT and the wither blow holes too, and stone put back where the
+  street was brings the street back. `/clearnear <radius>` removes every
   block within that many blocks of you and fills the holes there with the city again, its own
   textures and all. The **City destruction** button in Minecraft's pause menu (**O**) turns digging off.
 - **Builds are real in Night City:** torches, lanterns, glowstone and lava light the streets around
   them, and NPCs, cars and bullets meet the walls you build.
 - **Third person:** Minecraft's **F5** pulls Cyberpunk's camera back and shows your Minecraft skin
   and armour in V's place.
+- **Projectiles:** arrows, tridents, snowballs and ender pearls hit the city near and far.
 - **Combat:** hit NPCs with any Minecraft weapon, bow, trident, potion or TNT. Minecraft works out
   the hit (reach, cooldown, crits, shields) and the damage lands on the NPC's health in Cyberpunk.
   Damage V takes in Cyberpunk becomes a Minecraft hurt: her health is Minecraft's hearts alone
@@ -167,8 +175,8 @@ fTakeoverDelay = 5                  ; seconds after you continue a loaded save b
 
 [Collision]
 fRadius = 32                        ; scan radius around you, in blocks
-iSamplesPerBlock = 2                ; more catches thinner geometry, costs frame time
-iRayBudget = 2000                   ; ray casts per frame
+iQueryBudget = 2000                 ; box queries and rays per frame
+fBudgetMs = 3                       ; and at most this long per frame
 
 [Combat]
 fDamageToGame = 5                   ; Minecraft damage -> NPC health
@@ -213,15 +221,17 @@ Java 25 and the mod jar from the release. Every key, with what it does, is in
 - With frame generation on, Minecraft is drawn on the game's real frames and frame generation
   carries it into the generated ones like the game's HUD, so blocks move at the real frame rate in
   a fast turn. New and not yet tried in the game.
-- Collision comes from ray casts, so thin things (railings, grilles, wires) can be missed.
+- Collision is accurate to an eighth of a block around you, and to half a block further than 16
+  blocks off until you come closer. Something thinner than a quarter block (a railing's bar)
+  collides as a quarter block.
 - Combat follows the NPC under your crosshair and the last few you fought, not every NPC around.
-- Digging into the city is new and hasn't been tried in the game yet. It needs DLSS (or another
-  Streamline feature that uses depth) to cut the city open pixel by pixel; without it the hole's
-  walls show a whole face at a time. NPCs and cars still walk and drive over holes, since
-  Cyberpunk's ground is still there for them. The city's collision only has surfaces, so whatever
-  is behind a street or a wall counts as solid ground: digging through a floor never opens into
-  the room under it. Looking up from inside a hole shows whatever Cyberpunk draws from under its
-  street: the street may look see-through around the opening, or still lie across it.
+- Digging needs DLSS (or another Streamline feature that uses depth) to cut the city open pixel by
+  pixel; without it the hole's walls show a whole face at a time. NPCs and cars still walk and
+  drive over holes, since Cyberpunk's ground is still there for them. What stood behind something
+  you dug away was never in Cyberpunk's picture, so it's painted in from around the hole, and blocks
+  far behind it don't show through it. Looking up from inside a hole shows whatever Cyberpunk draws
+  from under its street: the street may look see-through around the opening, or still lie across it.
+- End portals show still stars, not Minecraft's moving ones.
 - Lights, colliders, third person and your skin in first person are new and haven't been tried in
   the game yet; how they
   should behave, and what to tune, is in [docs/ROADMAP.md](docs/ROADMAP.md).

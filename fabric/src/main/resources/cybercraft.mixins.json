@@ -25,7 +25,8 @@
     "ProjectileUtilMixin",
     "ServerExplosionMixin",
     "ServerGamePacketListenerAccessor",
-    "ServerPlayerMixin"
+    "ServerPlayerMixin",
+    "WitherBossMixin"
   ],
   "injectors": { "defaultRequire": 1 }
 }

@@ -32,6 +32,11 @@ namespace cybercraft::Builds
 	// Main thread, every frame while a save is loaded, with the player in Minecraft coordinates.
 	void Update(const McVec& a_playerMc);
 
+	// Every block of the block box [a_x0, a_x1) x [a_y0, a_y1) x [a_z0, a_z1) is one of the player's
+	// solid blocks (Minecraft coordinates). Main thread: the city's sweep leaves those out, since their
+	// colliders are as Static as the city and Minecraft has the blocks anyway.
+	bool Filled(std::int32_t a_x0, std::int32_t a_y0, std::int32_t a_z0, std::int32_t a_x1, std::int32_t a_y1, std::int32_t a_z1);
+
 	// Everything spawned goes, and is spawned again where it belongs (the grid moved, Minecraft
 	// reconnected). Main thread.
 	void Respawn();

@@ -61,6 +61,27 @@ public final class CyberDigBlast {
 	}
 
 	/**
+	 * Something breaking every block in a box (the wither, hurt): the city's cells there become the
+	 * blocks they're made of, for it to break with the rest, and the ground round them is revealed as
+	 * after a blast. With destruction on and the city known there; server thread.
+	 */
+	public static void breakBox(ServerLevel level, BlockPos min, BlockPos max) {
+		if (!CyberDig.destruction || !CyberCollision.active() || !CyberCollision.isKnown(min.getX(), min.getY(), min.getZ())
+			|| !CyberLink.readCyberState(STATE)) {
+			return;
+		}
+		Vec3 centre = new Vec3((min.getX() + max.getX() + 1) * 0.5, (min.getY() + max.getY() + 1) * 0.5, (min.getZ() + max.getZ() + 1) * 0.5);
+		float radius = (float) Math.max(max.getX() - min.getX() + 1, Math.max(max.getY() - min.getY() + 1, max.getZ() - min.getZ() + 1)) * 0.5F;
+		CyberDigBlast blast = new CyberDigBlast(level, STATE.worldId, centre, radius);
+		List<BlockPos> targets = new ArrayList<>();
+		for (BlockPos pos : BlockPos.betweenClosed(min, max)) {
+			targets.add(pos.immutable());
+		}
+		blast.materialize(targets, true);
+		blast.finish();
+	}
+
+	/**
 	 * What geometry fills this cell as far as a blast cares: a Proto.DIG_* material if any of
 	 * it is diggable ground or rock (even a little: the surface layer goes too), KEEP for a building,
 	 * 0 for nothing (or already dug, or a Minecraft block there, which the blast handles itself).

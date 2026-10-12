@@ -128,33 +128,48 @@ them. The shapes aren't blocks, so blocks can be placed against them freely. (Th
 the local player on a host's exact triangles, `CyberCollider` and `PlayerEdgeMixin`, but the plugin
 sends voxels only, so that path is idle.)
 
-**Where the shapes come from:** `gameSpatialQueriesSystem::SyncRaycastByCollisionGroup` rays
-(groups `Static,Terrain`) around V, at 1/8-block resolution, budgeted per frame and nearest first:
+**Where the shapes come from:** Cyberpunk's own physics is asked, not guessed at.
+`gameSpatialQueriesSystem::OverlapByQueryFilter` box queries around V, budgeted per frame and
+nearest first, with one query filter for what blocks V: groups `Static`, `Terrain`, `Destructible`
+and `PlayerBlocker`, static and moving bodies alike (`sSolidGroups`):
 
-- one downward multi-hit ray per sample column: floors, roads, ledges, overhangs, ceilings; a ray
-  that starts inside a solid steps on down through it instead of ending the column
-- short horizontal probes at knee, waist and head height: walls, because down rays only graze
-  vertical faces and Night City is mostly vertical faces
-- surfaces steeper than ~50° become wall columns, so Minecraft's step-up refuses them
+- an octree per 8-block region: a box that touches nothing costs one query; one that does is split
+  in eight, down to quarter-block cells. A cell is solid only if its own query found something in
+  it. A box whose corners are all inside a solid (the ground under the terrain's surface, a thick
+  slab of street, a building's convex bulk) is solid all through, without going down to its cells
+  (a hollow mesh only has its shell, and is sent as one)
+- each solid cell with air beside it is looked into from that air, one ray along its centre line:
+  where the surface is, to the 1/8 block (a floor's height to stand at), following its normal
+  across the cell
 - every frame, the ground under Minecraft's player (the guard), sent at once if the sweep hasn't
-  sent it yet
+  sent it yet: the cell its surface is in, never more
 
-Each hit fills the whole cell its sample stands for (half a sample spacing each way), following
-the surface's slope at 1/8-block resolution: a floor is a continuous quarter-block slab and a wall
-a continuous sheet, not one 1/8-block column per sample. Players stood on the columns, but arrows,
-thrown projectiles, dropped items and the crosshair slipped between them.
+`/cityprobe` in Minecraft logs what Cyberpunk has in the block looked at, group by group, and the
+sweep's queries for it again. Probing what V couldn't walk through found every one of them in
+`PlayerBlocker`: static walls and street signs, road barriers (`Destructible`), railings and doors
+(moving bodies, which the earlier static-only rays never saw).
 
-A region is sent only when all of its samples are in. Thin geometry (railings, grilles, wires) can
-fall between samples.
+On its first floor the sweep works out how the game takes a box's dimension (half extents or
+whole) and whether the one filtered query finds what the groups one by one do; if not, it queries
+group by group.
+
+The sweep goes region by region (8 blocks a side), nearest first to where the player will be in
+half a second, and a region is sent only when all of it is in. One scanned a moment ago isn't
+scanned again for a while (3 s round the player, 10 s further out), and rescans get a third of the
+frame's budget; the region in progress carries on when the sweep starts over from where the player
+has got to. Something thinner than a quarter block (a railing's bar) becomes a quarter-block cell.
 
 Walking the physics world and voxelizing the real shapes ("stage C") isn't possible here: RED4ext
-exposes no physics world to walk. Rays are the design, not a stopgap.
+exposes no physics world to walk. Box queries are the nearest thing: they say what's there, not
+how it's shaped.
 
 ### 5.2 Water
 
-Water is its own collision group (`Water`, material `water.physmat`), apart from the `Static` and
-`Terrain` the down rays use, so the sweep casts one more ray per block column against that group
-alone. Its hits become a 16×16 grid of water surface heights around the player (`WaterGrid`), and
+Water isn't solid to the box queries: it's its own collision group (`Water`), or a static surface of
+a water material, which the sweep leaves out. So it has a pass of its own: each block column of a
+16×16 grid round the player, nearest first as the grid follows the player, is looked down once, by
+a ray in the `Water` group and else down through the city's static surfaces to the first of water
+material (under a bridge, a pier). Its hits become the grid's water surface heights (`WaterGrid`), and
 a Mixin on `Level.getFluidState` reports a water source in every air cell below them, so all of
 Minecraft treats it as water: swimming, floating and drowning, buckets (an empty one fills from
 it), boats, fishing, waterlogged blocks, lava turning to obsidian. The block state stays air, so the
@@ -169,15 +184,20 @@ Cyberpunk's meshes and colliders can't be edited, so a hole exists in three plac
   cells out of every query, so for Minecraft's physics, crosshair and projectiles the hole is real.
 - **Around the hole:** cells next to a dug one are classified from the voxels the plugin sent
   (`CyberDig.classifyVoxel`). One the surface runs through stays the city's, solid up to a floor's
-  top; one under a surface (within 20 blocks) is ground: revealed as a real block, dirt for the
-  first few, stone with ores, bedrock from 16 down; one in the open (standing room on a floor, or
-  nothing over it) is air. Until a cell is revealed, `DigWalls` draws its face and `wallShape`
+  top; one over a floor within 6 blocks under it, with standing room over that floor (two clear
+  cells), is in the open (a player gets there) and stays air, whatever is over it; otherwise one under
+  a surface (within 20 blocks) is ground:
+  revealed as a real block, dirt for the first few, stone with ores, bedrock from 16 down. A floor
+  is told by its slab layers (a quarter of the block or more covered), so posts and railings
+  standing on a pavement don't make it a wall. Until a cell is revealed, `DigWalls` draws its face and `wallShape`
   makes it solid, so a hole is always closed. Voxels only show surfaces, so everything behind one
   is ground: a room under a dug floor isn't found.
-- **Things standing free:** a dug cell whose geometry stands on a floor right under it, is at most
-  two cells tall, and has open air (or dug cells) beside it on two sides or more and ground on none
-  (`CyberDig.freeStanding`, `CityVoxels`) is a chair, a bench, a bin, a low wall: there's no ground
-  behind it, so it's just gone, with no walls, floor, wall collision or revealed blocks round it. The
+- **Things standing free:** a dug cell whose geometry stands on a floor (straight down through the
+  rest of it) and has open air (or dug cells) beside it on a side or more and ground on none
+  (`CyberDig.freeStanding`, `CityVoxels`) is a chair, a cushion, a bin, a low wall, a window's frame,
+  a post: there's no ground behind it, so it's just gone, with no walls, floor, wall collision or
+  revealed blocks round it. Only the street's surface (nothing under it) and what has ground beside it
+  (a hillside) open into stone and dirt. The
   wall probes wrap such things in vertical sheets, which read as walls and lined the cell with stone
   hanging in the air. What stood behind it was never in Cyberpunk's picture, so the cell's sides are
   sent as backdrops (vertex flag bit 8): drawn behind everything else Minecraft draws, only where the
@@ -374,7 +394,7 @@ Each phase ends in something playable. State per phase: CYBERCRAFT.md.
 | Risk | Mitigation |
 |---|---|
 | Game calls found by name break with a game update | Each is looked up by exact signature where known and degrades with a log line; `bDiagnostics` dumps the real signatures |
-| Rays miss thin geometry | `iSamplesPerBlock`, horizontal probes; stage C isn't available |
+| Box queries cost frame time | Octree (an empty 8-block box is one query), `iQueryBudget` and `fBudgetMs` per frame; pillars further than 12 blocks rescanned only every 10 s |
 | Depth only with DLSS | Ray-tested face occlusion as the fallback (holes show a face at a time) |
 | V under the city's ground in a hole | Teleported every frame onto `Builds`' colliders; put back on the ground when Minecraft lets go for good |
 | Frame generation hides the overlay | Drawn into the game's own swap chain before frame generation; skipped with it on only if that swap chain isn't found |
