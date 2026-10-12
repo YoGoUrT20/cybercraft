@@ -2,6 +2,10 @@
 #   CyberCraft-<version>.zip           the Cyberpunk 2077 mod (unpack into the game folder, or install
 #                                      with Vortex): the RED4ext plugin and CyberCraft-Minecraft.zip,
 #                                      the Minecraft it starts
+#   CyberCraftGame-<version>.zip       the same mod without the Minecraft inside it, and
+#   CyberCraftMinecraft-<version>.zip  that Minecraft unpacked, for %LOCALAPPDATA%\CyberCraft: how
+#                                      Melty installs CyberCraft (melty.json), signing Prism in
+#                                      before the game starts
 #   CyberCraftSymbols-<version>.zip    the plugin's debug symbols, for reading crash logs
 #   cybercraft-fabric-<version>.jar      the Minecraft mod on its own (for your own launcher)
 #   Codeware-<version>.zip, mod_settings_v<version>.zip
@@ -109,6 +113,14 @@ $bundle = "$dist\bundle"
 Copy-Item -Recurse "$root\tools\minecraft-bundle" $bundle
 Expand-Archive "$cache\$prismZip" "$bundle\Prism" -Force
 Copy-Item "$cache\PrismLauncher-$prismVersion-LICENSE.txt" "$bundle\Prism\LICENSE-PrismLauncher.txt"
+# The Visual C++ runtime Prism's MSVC build needs, beside it (Microsoft lets programs carry these
+# files): an older runtime already on a player's PC crashes programs built with a newer compiler.
+$crt = Get-ChildItem "${env:ProgramFiles}\Microsoft Visual Studio\*\*\VC\Redist\MSVC\*\x64\Microsoft.VC14*.CRT", "${env:ProgramFiles(x86)}\Microsoft Visual Studio\*\*\VC\Redist\MSVC\*\x64\Microsoft.VC14*.CRT" -Directory -ErrorAction SilentlyContinue |
+    Sort-Object { [version]$_.Parent.Parent.Name } | Select-Object -Last 1
+if (-not $crt) { throw "no Visual C++ redistributable folder (install Visual Studio's C++ tools)" }
+foreach ($runtime in "vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll", "msvcp140_1.dll", "msvcp140_2.dll") {
+    Copy-Item "$($crt.FullName)\$runtime" "$bundle\Prism"
+}
 (Get-Content "$bundle\Prism\THIRD-PARTY.txt" -Raw).Replace("{PRISM_VERSION}", $prismVersion) | Set-Content "$bundle\Prism\THIRD-PARTY.txt" -NoNewline
 $mods = "$bundle\Prism\instances\CyberCraft\.minecraft\mods"
 New-Item -ItemType Directory $mods -Force | Out-Null
@@ -116,21 +128,26 @@ Copy-Item "$cache\$fabricApiJar" $mods
 Copy-Item "$cache\$e4mcJar" $mods
 Copy-Item $jar "$mods\cybercraft-$modVersion.jar"
 Set-Content "$bundle\bundle-version.txt" "CyberCraft $version (mod $modVersion), Prism Launcher $prismVersion, $fabricApiJar, $e4mcJar" -NoNewline
+# The jars this release brings: the plugin removes older releases' ones (an installer adds beside them).
+Set-Content "$bundle\mods.txt" (@("cybercraft-$modVersion.jar", $fabricApiJar, $e4mcJar) -join "`r`n")
 New-ZipFromFolder "$dist\CyberCraft-Minecraft.zip" $bundle
+Copy-Item "$dist\CyberCraft-Minecraft.zip" "$dist\CyberCraftMinecraft-$version.zip"
 Remove-Item -Recurse -Force $bundle
 
 # Laid out from the game folder: RED4ext loads red4ext\plugins\<name>\*.dll, and the plugin looks for
 # CyberCraft-Minecraft.zip (and CyberCraft.ini, if the player makes one) next to its DLL, and adds
 # its scripts folder to the redscript compilation. The game loads archive\pc\mod\*.archive itself.
-New-Zip "$dist\CyberCraft-$version.zip" ([ordered]@{
+$gameFiles = [ordered]@{
     "red4ext/plugins/CyberCraft/CyberCraft.dll" = $dll
-    "red4ext/plugins/CyberCraft/CyberCraft-Minecraft.zip" = "$dist\CyberCraft-Minecraft.zip"
     "red4ext/plugins/CyberCraft/scripts/CyberCraft.reds" = "$root\red4ext\scripts\CyberCraft.reds"
     "red4ext/plugins/CyberCraft/scripts/CyberCraftModSettings.reds" = "$root\red4ext\scripts\CyberCraftModSettings.reds"
     "red4ext/plugins/CyberCraft/LICENSE.txt" = "$root\LICENSE"
     "red4ext/plugins/CyberCraft/THIRD-PARTY-NOTICES.md" = "$root\THIRD-PARTY-NOTICES.md"
     "archive/pc/mod/CyberCraft.archive" = "$root\red4ext\archive\CyberCraft.archive"
-})
+}
+New-Zip "$dist\CyberCraftGame-$version.zip" $gameFiles
+$gameFiles["red4ext/plugins/CyberCraft/CyberCraft-Minecraft.zip"] = "$dist\CyberCraft-Minecraft.zip"
+New-Zip "$dist\CyberCraft-$version.zip" $gameFiles
 # Not CyberCraft-<version>-pdb.zip: melty.json's CyberCraft-*.zip would match it too.
 New-Zip "$dist\CyberCraftSymbols-$version.zip" ([ordered]@{ "CyberCraft.pdb" = $pdb })
 Copy-Item $jar "$dist\cybercraft-fabric-$modVersion.jar"

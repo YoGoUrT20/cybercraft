@@ -15,7 +15,9 @@
 // world is up, hides its own window and opens its world by itself, and quits again when this
 // Cyberpunk closes. What to start comes from CyberCraft.ini; by default the bundled Prism
 // Launcher's "CyberCraft" instance (Prism signs in to the player's Microsoft account; the official
-// launcher can't be started into a profile from outside).
+// launcher can't be started into a profile from outside). The bundle comes either as
+// CyberCraft-Minecraft.zip next to the plugin (a manual install: unpacked here), or already in
+// %LOCALAPPDATA%\CyberCraft (Melty puts it there, and signs Prism in before the game starts).
 namespace cybercraft::Launcher
 {
 	namespace
@@ -151,13 +153,69 @@ namespace cybercraft::Launcher
 				logger::warn("Minecraft: unpacking failed (tar exit code {})", code);
 				return {};
 			}
-			// Prism's settings: only the first time (after that they're the player's).
-			const auto cfg = dir / "Prism" / "prismlauncher.cfg";
-			if (!std::filesystem::exists(cfg)) {
-				std::filesystem::copy_file(dir / "defaults" / "prismlauncher.cfg", cfg, ec);
-			}
 			std::ofstream(dir / "bundle.stamp") << stamp;
 			return prism;
+		}
+
+		// Old releases' mod jars: the bundle's mods.txt names the ones this release brings. An
+		// installer that puts the bundle in place (Melty) adds the new jars beside the old ones,
+		// and Fabric won't start with two CyberCraft or Fabric API jars.
+		void TidyMods(const std::filesystem::path& a_dir)
+		{
+			std::ifstream list{ a_dir / "mods.txt" };
+			if (!list) {
+				return;
+			}
+			std::vector<std::string> keep;
+			for (std::string line; std::getline(list, line);) {
+				while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) {
+					line.pop_back();
+				}
+				if (!line.empty()) {
+					keep.push_back(line);
+				}
+			}
+			std::error_code ec;
+			for (const auto& entry : std::filesystem::directory_iterator(a_dir / "Prism" / "instances" / "CyberCraft" / ".minecraft" / "mods", ec)) {
+				const auto name = entry.path().filename().string();
+				const bool ours = name.starts_with("cybercraft-") || name.starts_with("fabric-api-") || name.starts_with("e4mc-");
+				if (ours && std::ranges::find(keep, name) == keep.end()) {
+					logger::info("Minecraft: removing {} (an older release's)", name);
+					std::filesystem::remove(entry.path(), ec);
+				}
+			}
+		}
+
+		// Prism's settings are the player's once it has them (an installer may have written some
+		// already, Melty signing it in), but CyberCraft needs its defaults (no window left open, Java
+		// downloaded by itself): any of those still missing are added.
+		void MergeDefaults(const std::filesystem::path& a_dir)
+		{
+			const auto      defaults = a_dir / "defaults" / "prismlauncher.cfg";
+			const auto      cfg = a_dir / "Prism" / "prismlauncher.cfg";
+			std::error_code ec;
+			if (!std::filesystem::exists(defaults, ec)) {
+				return;
+			}
+			if (!std::filesystem::exists(cfg, ec)) {
+				std::filesystem::copy_file(defaults, cfg, ec);
+				return;
+			}
+			wchar_t section[8192]{};
+			::GetPrivateProfileSectionW(L"General", section, static_cast<DWORD>(std::size(section)), defaults.c_str());
+			for (const wchar_t* pair = section; *pair; pair += std::wcslen(pair) + 1) {
+				const std::wstring line = pair;
+				const auto         eq = line.find(L'=');
+				if (eq == std::wstring::npos) {
+					continue;
+				}
+				const std::wstring key = line.substr(0, eq);
+				wchar_t            have[16]{};
+				::GetPrivateProfileStringW(L"General", key.c_str(), L"<unset>", have, static_cast<DWORD>(std::size(have)), cfg.c_str());
+				if (std::wcscmp(have, L"<unset>") == 0) {
+					::WritePrivateProfileStringW(L"General", key.c_str(), line.substr(eq + 1).c_str(), cfg.c_str());
+				}
+			}
 		}
 
 		// Runs a program the way double-clicking it would (see OpenFromDesktop), or directly if
@@ -245,9 +303,11 @@ namespace cybercraft::Launcher
 		const std::filesystem::path chosen = ExpandEnv(Config::GetString(L"Minecraft", L"sLauncher", L""));
 		const std::wstring          args = Config::GetString(L"Minecraft", L"sArguments", L"--launch CyberCraft");
 		const bool                  bundled = chosen.empty() && std::filesystem::exists(Bundle());
-		const std::filesystem::path installed = chosen.empty() && !bundled ? FindPrism() : std::filesystem::path{};
-		if (chosen.empty() && !bundled && installed.empty()) {
-			logger::warn("Minecraft: not started: no CyberCraft-Minecraft.zip next to the plugin and no Prism Launcher where its installer puts it; set sLauncher in CyberCraft.ini");
+		const auto                  placed = InstallDir() / "Prism" / "prismlauncher.exe";
+		const bool                  inPlace = chosen.empty() && !bundled && std::filesystem::exists(placed);
+		const std::filesystem::path installed = chosen.empty() && !bundled && !inPlace ? FindPrism() : std::filesystem::path{};
+		if (chosen.empty() && !bundled && !inPlace && installed.empty()) {
+			logger::warn("Minecraft: not started: no CyberCraft-Minecraft.zip next to the plugin, no bundled Minecraft in %LOCALAPPDATA%\\CyberCraft and no Prism Launcher where its installer puts it; set sLauncher in CyberCraft.ini");
 			status = Status::kNoLauncher;
 			return;
 		}
@@ -258,14 +318,18 @@ namespace cybercraft::Launcher
 		}
 		status = Status::kStarting;
 		// Off the main thread: unpacking and talking to Explorer take a moment.
-		std::thread([chosen, installed, bundled, args] {
-			std::filesystem::path program = !chosen.empty() ? chosen : installed;
-			if (bundled) {
-				program = EnsureBundle();
+		std::thread([chosen, installed, bundled, inPlace, placed, args] {
+			std::filesystem::path program = !chosen.empty() ? chosen : inPlace ? placed : installed;
+			if (bundled || inPlace) {
+				if (bundled) {
+					program = EnsureBundle();
+				}
 				if (program.empty()) {
 					status = Status::kFailed;
 					return;
 				}
+				TidyMods(InstallDir());
+				MergeDefaults(InstallDir());
 				if (!std::filesystem::exists(program.parent_path() / "accounts.json")) {
 					status = Status::kSignIn;  // first time: Prism asks for the Microsoft account
 				}

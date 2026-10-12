@@ -14,9 +14,16 @@
   "components": [
     {
       "id": "main",
-      "fileName": "CyberCraft-*.zip",
+      "fileName": "CyberCraftGame-*.zip",
       "label": "CyberCraft",
       "kind": "main",
+      "required": true
+    },
+    {
+      "id": "minecraft",
+      "fileName": "CyberCraftMinecraft-*.zip",
+      "label": "CyberCraft's Minecraft: portable Prism Launcher (GPL-3.0), Fabric API, e4mc",
+      "kind": "extra",
       "required": true
     },
     {
@@ -60,6 +67,11 @@
       "to": "{game}/red4ext"
     },
     {
+      "component": "minecraft",
+      "from": "",
+      "to": "{localappdata}/CyberCraft"
+    },
+    {
       "component": "codeware",
       "from": "red4ext/",
       "to": "{game}/red4ext"
@@ -76,11 +88,22 @@
       "--launcher-skip"
     ]
   },
+  "setup": {
+    "label": "Minecraft",
+    "launch": {
+      "kind": "exe",
+      "path": "{localappdata}/CyberCraft/Prism/prismlauncher.exe"
+    },
+    "done": {
+      "file": "{localappdata}/CyberCraft/Prism/accounts.json"
+    },
+    "stopWhenDone": true
+  },
   "runtimeData": [
     "{localappdata}/CyberCraft"
   ],
   "notes": {
-    "firstLaunch": "The first time, CyberCraft unpacks its Minecraft and Prism Launcher opens a small window asking you to sign in with the Microsoft account that owns Minecraft: Java Edition. Alt-Tab to it, sign in and go back to the game; Prism then downloads Minecraft and Java (a few minutes, once). After that Minecraft starts hidden with the game and takes over V once a save has loaded."
+    "firstLaunch": "The first time, Melty signs CyberCraft's Minecraft in with the Microsoft account that owns Minecraft: Java Edition before the game starts. While Cyberpunk loads, Prism downloads Minecraft and Java in the background (a few minutes, once). Minecraft then runs hidden and takes over V once a save has loaded. Your world opens to friends by itself; turn off Open to friends in Mod Settings to keep it private."
   },
   "multiplayer": {
     "maxPlayers": 100,

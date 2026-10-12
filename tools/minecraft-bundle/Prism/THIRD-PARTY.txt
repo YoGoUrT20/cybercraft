@@ -6,6 +6,10 @@ Prism Launcher {PRISM_VERSION} (this folder, the unmodified portable Windows bui
   License: GNU General Public License v3.0 (LICENSE-PrismLauncher.txt)
   Source:  https://github.com/PrismLauncher/PrismLauncher/tree/{PRISM_VERSION}
 
+Microsoft Visual C++ runtime (vcruntime140*.dll, msvcp140*.dll in this folder), for Prism Launcher
+  Redistributable files of Microsoft Visual Studio, shipped under its license terms, so Prism runs
+  on PCs with an older (or no) Visual C++ runtime installed.
+
 Fabric API (instances/CyberCraft/.minecraft/mods/fabric-api-*.jar)
   License: Apache License 2.0
   Source:  https://github.com/FabricMC/fabric
