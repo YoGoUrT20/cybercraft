@@ -25,6 +25,30 @@ public final class CyberCraftClient implements ClientModInitializer {
 						net.minecraft.client.Minecraft.getInstance().execute(() -> MirrorWorld.joinFriend(net.minecraft.client.Minecraft.getInstance(), link));
 						return 1;
 					})));
+			// Diagnostics: what Cyberpunk's physics has in the block looked at, and why Minecraft has it
+			// solid or not, written to the plugin's log.
+			dispatcher.register(net.fabricmc.fabric.api.client.command.v2.ClientCommands.literal("cityprobe").executes(c -> {
+				net.minecraft.client.Minecraft minecraft = net.minecraft.client.Minecraft.getInstance();
+				net.minecraft.core.BlockPos pos;
+				if (minecraft.hitResult instanceof net.minecraft.world.phys.BlockHitResult block && block.getType() == net.minecraft.world.phys.HitResult.Type.BLOCK) {
+					pos = block.getBlockPos();
+				} else if (minecraft.player != null) {
+					pos = net.minecraft.core.BlockPos.containing(minecraft.player.getEyePosition().add(minecraft.player.getLookAngle().scale(2.0)));
+				} else {
+					return 0;
+				}
+				dev.cybercraft.CyberCraft.LOG.info("CyberCraft: /cityprobe at {} {} {}: Minecraft has it {}% solid (city geometry {}, region known {})", pos.getX(), pos.getY(),
+					pos.getZ(), Math.round(dev.cybercraft.world.CyberCollision.solidFraction(pos) * 100), dev.cybercraft.world.CyberCollision.hasGeometry(pos),
+					dev.cybercraft.world.CyberCollision.isKnown(pos.getX(), pos.getY(), pos.getZ()));
+				if (!dev.cybercraft.link.CyberLink.active()) {
+					c.getSource().sendError(net.minecraft.network.chat.Component.literal("Cyberpunk isn't connected: nothing to ask."));
+					return 0;
+				}
+				dev.cybercraft.link.CyberLink.pushEvent(dev.cybercraft.link.Proto.EV_CITY_PROBE, 0, pos.getX(), pos.getY(), pos.getZ(), 0, 0);
+				c.getSource().sendFeedback(net.minecraft.network.chat.Component.literal(
+					"Probed the city at " + pos.getX() + " " + pos.getY() + " " + pos.getZ() + ": what Cyberpunk has there is in CyberCraft.log."));
+				return 1;
+			}));
 			dispatcher.register(net.fabricmc.fabric.api.client.command.v2.ClientCommands.literal("leave").executes(c -> {
 				net.minecraft.client.Minecraft.getInstance().execute(() -> MirrorWorld.leaveFriend(net.minecraft.client.Minecraft.getInstance()));
 				return 1;

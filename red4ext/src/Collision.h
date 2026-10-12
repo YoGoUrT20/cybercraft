@@ -72,6 +72,11 @@ namespace cybercraft
 		// the game offers, each result logged.
 		static void ProbeRays(const RED4ext::Vector4& a_cpPos);
 
+		// /cityprobe (kEvCityProbe): logs what Cyberpunk's physics has in the Minecraft block whose
+		// lowest corner is a_block (box overlaps and rays, group by group), what Minecraft was sent
+		// there, and which of the sweep's rules made it solid (its columns scanned again). Game thread.
+		void ProbeCell(const McVec& a_block);
+
 		// True if Cyberpunk's static world (the same groups the collision rays use) stands between
 		// a_from and a_to, more than a_margin short of a_to. Minecraft coordinates, game thread.
 		bool Blocked(const McVec& a_from, const McVec& a_to, double a_margin);
@@ -200,6 +205,12 @@ namespace cybercraft
 		std::unordered_map<std::uint64_t, Scanned>      scanned_;
 		static constexpr std::chrono::seconds           kFreshFor{ 10 };
 		static constexpr double                         kNearBlocks = 12.0;
+		// ProbeCell: the block being explained, the rule marking sub-voxels right now, and how many of
+		// the block's sub-voxels each rule marked.
+		std::optional<std::array<std::int32_t, 3>>    explain_;
+		const char*                                     rule_{ "?" };
+		bool                                            explainRays_{ false };  // log every sweep ray (the block's own columns)
+		std::unordered_map<std::string, int>            explainCounts_;
 		double                                          updateMs_{ 0.0 };  // time in Update since the last log
 		std::uint32_t                                   updateFrames_{ 0 };
 		proto::WaterGrid                                water_{};

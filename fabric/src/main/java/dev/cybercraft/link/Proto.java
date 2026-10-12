@@ -73,6 +73,7 @@ public final class Proto {
 	// 4 and 5 are retired.
 	public static final int EV_SET_TIME = 6; // a = the hour of day Minecraft shows now (0-24)
 	public static final int EV_SET_WEATHER = 7; // id = WEATHER_*
+	public static final int EV_CITY_PROBE = 8; // a/b/c = the block looked at (/cityprobe); the plugin logs what's there
 	public static final int HIT_CRITICAL = 1;
 	public static final int HIT_PROJECTILE = 1 << 1;
 	public static final int HIT_SWEEP = 1 << 2;

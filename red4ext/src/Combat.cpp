@@ -6,6 +6,7 @@
 #include <RED4ext/Scripting/Natives/Generated/game/targeting/TargetPartInfo.hpp>
 #include <RED4ext/Scripting/Natives/Generated/game/data/StatPoolType.hpp>
 
+#include "Collision.h"
 #include "Config.h"
 #include "Environment.h"
 #include "Game.h"
@@ -484,6 +485,9 @@ namespace cybercraft::Combat
 				return;
 			case proto::kEvSetWeather:
 				Environment::SetWeather(static_cast<proto::Weather>(a_event.id));
+				return;
+			case proto::kEvCityProbe:
+				Collision::Get().ProbeCell(McVec{ a_event.a, a_event.b, a_event.c });
 				return;
 			default:
 				return;

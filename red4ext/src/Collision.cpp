@@ -384,6 +384,7 @@ namespace cybercraft
 				from = surfaceY - 0.05;
 				continue;
 			}
+			rule_ = "floor (a down ray's hit)";
 			MarkSurface(regions_, x, z, surfaceY, normal);
 			bool steep = std::abs(normal.Y) < cfg.steepNormalY;
 			if (steep) {
@@ -411,6 +412,7 @@ namespace cybercraft
 				// Too steep to walk: raise a wall column so Minecraft's step-up refuses it
 				// (DESIGN.md §5.1). Down rays only graze such faces, so this is a backstop;
 				// the horizontal probes below are what actually find walls.
+				rule_ = "steep hit (a 2.5-block wall raised over it)";
 				MarkSpan(regions_, x, z, surfaceY, surfaceY + cfg.wallHeight);
 			}
 			// The walls that matter are at the height the player is at now, not where the sweep
@@ -458,6 +460,7 @@ namespace cybercraft
 							y1 = std::max<double>(topHit.Y - kEps, y - 0.375);  // as floors: up to the top, not a voxel past it
 						}
 					}
+					rule_ = height < 0.5 ? "wall probe at the knee" : height < 1.5 ? "wall probe at the waist" : "wall probe at the head";
 					MarkWall(axis, axis == 0 ? z : x, hit, normal, y - 0.375, y1);
 				}
 			}
@@ -541,6 +544,7 @@ namespace cybercraft
 		if (std::abs(ny) < 0.2) {
 			// Grazing a near-vertical face: its slope says nothing about the cell. The horizontal
 			// probes find these.
+			rule_ = "grazed face (a down ray's hit on something near vertical)";
 			MarkSpan(a_into, a_mcX, a_mcZ, a_surfaceY - 0.25, a_surfaceY - kEps);
 			return;
 		}
@@ -619,6 +623,9 @@ namespace cybercraft
 			auto&      region = a_into[RegionKey(rx, ry, rz)];
 			const auto local = static_cast<std::uint32_t>((bx - rx * kRegionSize) + kRegionSize * ((by - ry * kRegionSize) + kRegionSize * (bz - rz * kRegionSize)));
 			region.blocks[local][gy - by * 8] |= bit;
+			if (explain_ && bx == (*explain_)[0] && by == (*explain_)[1] && bz == (*explain_)[2]) {
+				++explainCounts_[rule_];
+			}
 		}
 	}
 
@@ -1040,6 +1047,130 @@ namespace cybercraft
 		byName(byGroup, "inside", { "Static", "Terrain" });
 	}
 
+	void Collision::ProbeCell(const McVec& a_block)
+	{
+		const auto bx = FloorI(a_block.x), by = FloorI(a_block.y), bz = FloorI(a_block.z);
+		const auto mpb = MetresPerBlock();
+		const auto centre = McToCp(bx + 0.5, by + 0.5, bz + 0.5);
+		logger::info("cityprobe: block ({}, {}, {}), its centre at Cyberpunk ({:.2f}, {:.2f}, {:.2f}), {:.2f} m a block; the sweep's window y {}..{}", bx, by, bz,
+			centre.x, centre.y, centre.z, mpb, yMin_, yMax_);
+
+		// What Minecraft has there: the sweep's sub-voxels, and the guard's.
+		const auto rx = FloorDiv(bx, kRegionSize), ry = FloorDiv(by, kRegionSize), rz = FloorDiv(bz, kRegionSize);
+		const auto local = static_cast<std::uint32_t>((bx - rx * kRegionSize) + kRegionSize * ((by - ry * kRegionSize) + kRegionSize * (bz - rz * kRegionSize)));
+		auto solid = [&](const Regions& a_regions) -> int {
+			const auto region = a_regions.find(RegionKey(rx, ry, rz));
+			if (region == a_regions.end()) {
+				return -1;
+			}
+			const auto block = region->second.blocks.find(local);
+			int        count = 0;
+			if (block != region->second.blocks.end()) {
+				for (const auto bits : block->second) {
+					count += std::popcount(bits);
+				}
+			}
+			return count;
+		};
+		logger::info("cityprobe:   Minecraft was sent {} of 512 sub-voxels solid by the sweep{}, {} by the guard", std::max(solid(sent_), 0),
+			solid(sent_) < 0 ? " (its region wasn't sent)" : "", std::max(solid(guard_), 0));
+
+		auto* system = rtti::System("gameSpatialQueriesSystem");
+		if (!system) {
+			logger::info("cityprobe:   no gameSpatialQueriesSystem (no save loaded)");
+			return;
+		}
+		// Collision groups by name only (an unknown preset name crashed the game; groups don't).
+		static constexpr std::array<const char*, 12> kGroups{ "Static", "Terrain", "Dynamic", "Destructible", "DestructibleCluster", "Collider", "Debris",
+			"PlayerBlocker", "VehicleBlocker", "NPCBlocker", "Vehicle", "Water" };
+		static rtti::Method overlap{ "gameSpatialQueriesSystem", "Overlap" };
+		static rtti::Method byGroup{ "gameSpatialQueriesSystem", "SyncRaycastByCollisionGroup" };
+
+		// Is anything of each group inside the block? A box a little smaller than it (0.45 of a block,
+		// whether the game takes that as half or whole extents), unturned.
+		const auto       size = static_cast<float>(0.45 * mpb);
+		RED4ext::Vector4 dimension{ size, size, size, 0.0f };
+		RED4ext::Vector4 position{ centre.x, centre.y, centre.z, 1.0f };
+		RED4ext::EulerAngles rotation{};
+		for (const auto* name : kGroups) {
+			RED4ext::CName                group(name);
+			RED4ext::physics::TraceResult result{};
+			bool                          hit = false;
+			const bool                    called = overlap.Call(system, &hit, dimension, position, rotation, group, result);
+			const auto*                   material = result.material.ToString();
+			logger::info("cityprobe:   box {:.2f} m, {}: {}{}", size, name, !called ? "call failed" : hit ? "SOLID" : "empty",
+				hit ? std::format(" (material {}, at ({:.2f}, {:.2f}, {:.2f}))", material ? material : "?", result.position.X, result.position.Y, result.position.Z)
+					: std::string{});
+		}
+
+		// Rays through the block's centre, from a block before it to a block past it: what each group
+		// has there, static bodies only (as the sweep asks) and moving ones too.
+		struct Line
+		{
+			const char*      what;
+			RED4ext::Vector4 from, to;
+		};
+		const auto  reach = static_cast<float>(1.5 * mpb);
+		const float cx = centre.x, cy = centre.y, cz = centre.z;
+		const std::array<Line, 5> lines{ Line{ "down", { cx, cy, cz + reach, 1.0f }, { cx, cy, cz - reach, 1.0f } },
+			Line{ "east", { cx - reach, cy, cz, 1.0f }, { cx + reach, cy, cz, 1.0f } }, Line{ "west", { cx + reach, cy, cz, 1.0f }, { cx - reach, cy, cz, 1.0f } },
+			Line{ "north", { cx, cy - reach, cz, 1.0f }, { cx, cy + reach, cz, 1.0f } }, Line{ "south", { cx, cy + reach, cz, 1.0f }, { cx, cy - reach, cz, 1.0f } } };
+		for (const auto& line : lines) {
+			int hits = 0;
+			for (const auto* name : kGroups) {
+				for (const bool staticOnly : { true, false }) {
+					RED4ext::CName                group(name);
+					RED4ext::physics::TraceResult result{};
+					bool                          hit = false;
+					bool                          only = staticOnly;
+					bool                          dynamicOnly = false;
+					if (!byGroup.Call(system, &hit, line.from, line.to, group, result, only, dynamicOnly) || !hit) {
+						continue;
+					}
+					++hits;
+					const auto  dx = result.position.X - line.from.X, dy = result.position.Y - line.from.Y, dz = result.position.Z - line.from.Z;
+					const auto  along = std::sqrt(dx * dx + dy * dy + dz * dz);
+					const auto* material = result.material.ToString();
+					// The block spans 1 to 2 blocks along the line.
+					logger::info("cityprobe:   ray {}, {} ({}): hit {:.2f} blocks along ({}), normal ({:.2f}, {:.2f}, {:.2f}), material {}", line.what, name,
+						staticOnly ? "static bodies" : "all bodies", along / mpb, along / mpb < 1.0 ? "before the block" : along / mpb <= 2.0 ? "IN the block" : "past it",
+						result.normal.X, result.normal.Y, result.normal.Z, material ? material : "?");
+				}
+			}
+			if (hits == 0) {
+				logger::info("cityprobe:   ray {}: nothing in any group", line.what);
+			}
+		}
+
+		// Which of the sweep's rules make it solid: its columns and the ones round it scanned again
+		// (wall probes reach into the next block), every ray of its own columns logged.
+		auto saved = std::move(regions_);
+		regions_.clear();
+		explain_ = std::array<std::int32_t, 3>{ bx, by, bz };
+		explainCounts_.clear();
+		const auto spb = Config().samplesPerBlock;
+		const auto step = 1.0 / spb;
+		for (int i = -spb; i < 2 * spb; ++i) {
+			for (int j = -spb; j < 2 * spb; ++j) {
+				const double x = bx + (i + 0.5) * step, z = bz + (j + 0.5) * step;
+				explainRays_ = i >= 0 && i < spb && j >= 0 && j < spb;
+				if (explainRays_) {
+					logger::info("cityprobe:   the sweep's column at ({:.3f}, {:.3f}):", x, z);
+				}
+				ScanColumn(x, z);
+			}
+		}
+		explainRays_ = false;
+		explain_.reset();
+		regions_ = std::move(saved);
+		if (explainCounts_.empty()) {
+			logger::info("cityprobe:   no rule of the sweep makes this block solid now");
+		}
+		for (const auto& [rule, count] : explainCounts_) {
+			logger::info("cityprobe:   {} sub-voxel marks from: {}", count, rule);
+		}
+	}
+
 	std::optional<double> Collision::FirstHitY(const McVec& a_from, const McVec& a_to)
 	{
 		RED4ext::Vector4 hit{};
@@ -1096,7 +1227,17 @@ namespace cybercraft
 		static const std::vector<RED4ext::CName> groups = GroupList(Config().group);
 		++sweepRays_;
 		if (!RaycastGroups(groups, true, a_from, a_to, a_hit, a_normal, a_material, a_inside)) {
+			if (explainRays_) {
+				logger::info("cityprobe:     ray ({:.3f}, {:.3f}, {:.3f}) to ({:.3f}, {:.3f}, {:.3f}): nothing", a_from.x, a_from.y, a_from.z, a_to.x, a_to.y, a_to.z);
+			}
 			return false;
+		}
+		if (explainRays_) {
+			const auto* material = a_material.ToString();
+			const double dx = a_hit.X - a_from.x, dy = a_hit.Y - a_from.y, dz = a_hit.Z - a_from.z;
+			logger::info("cityprobe:     ray ({:.3f}, {:.3f}, {:.3f}) to ({:.3f}, {:.3f}, {:.3f}): hit ({:.3f}, {:.3f}, {:.3f}) {:.3f} blocks on, normal ({:.2f}, {:.2f}, {:.2f}){} material {}",
+				a_from.x, a_from.y, a_from.z, a_to.x, a_to.y, a_to.z, a_hit.X, a_hit.Y, a_hit.Z, std::sqrt(dx * dx + dy * dy + dz * dz), a_normal.X, a_normal.Y,
+				a_normal.Z, a_inside && *a_inside ? " STARTED INSIDE a solid" : "", material ? material : "?");
 		}
 		if (a_inside && *a_inside) {
 			return true;  // not a surface

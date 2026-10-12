@@ -292,6 +292,7 @@ namespace cybercraft::proto
 		// 4 and 5 are retired (they never had a Cyberpunk counterpart).
 		kEvSetTime = 6,     // Minecraft's time was changed (/time): a = the hour of day it shows now (0-24)
 		kEvSetWeather = 7,  // Minecraft's weather was changed (/weather): id = Weather
+		kEvCityProbe = 8,   // /cityprobe: a/b/c = the block looked at (its lowest corner, MC coords); the plugin logs what's there
 	};
 
 	enum HitFlags : std::uint32_t
