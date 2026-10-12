@@ -748,6 +748,10 @@ bHideV = 1                         ; V hidden in first person too (always in thi
 bMinecraftBody = 0                 ; 1: Minecraft's body in her place when you look down
 fBack = 0.2                        ; blocks it stands behind the eye in first person
 
+[Multiplayer]
+bOpenToFriends = 1                 ; Minecraft opens its world to friends as it loads (kCyberPrivateWorld
+                                   ; when 0); Mod Settings' Open to friends overrides it once saved
+
 [Debug]
 bDiagnostics = 0                   ; per-frame logs and the RTTI dumps
 ```

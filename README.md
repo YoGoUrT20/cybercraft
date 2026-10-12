@@ -6,6 +6,9 @@ Play Cyberpunk 2077 as a Minecraft player. You run through Night City with Minec
 carry Minecraft's inventory and HUD, build with Minecraft blocks on its streets and rooftops, and
 fight its NPCs with Minecraft weapons.
 
+**[Install CyberCraft in one click on Melty](https://melty.gg/m/cybercraft-2)**: Melty sets up
+both games, signs Minecraft in, and puts friends straight into your world.
+
 Neither game is rewritten. Cyberpunk keeps its city, NPCs, quests and saves; Minecraft keeps its
 own game logic. A RED4ext plugin in Cyberpunk and a Fabric mod in Minecraft share one block of
 memory. Minecraft runs hidden in the background, and Cyberpunk draws the picture.
@@ -49,8 +52,8 @@ memory. Minecraft runs hidden in the background, and Cyberpunk draws the picture
   buckets from it, sail boats and fish on it, waterlog blocks you place in it. Minecraft's day and
   weather follow Night City's, and `/time set night` or `/weather rain` in Minecraft change Night
   City too. Weather mods such as Enhanced Weather are picked up.
-- **Multiplayer (Minecraft side):** friends running CyberCraft can join your Minecraft world over
-  the internet. Each of you keeps your own Night City.
+- **Multiplayer (Minecraft side):** your world opens to friends by itself, and friends running
+  CyberCraft join it over the internet (one click on Melty). Each of you keeps your own Night City.
 
 ## Screenshots
 
@@ -78,6 +81,12 @@ Minecraft runs alongside Cyberpunk, so plan for roughly 3 GB more RAM and 1.5 GB
 files.
 
 ## Install
+
+**On [Melty](https://melty.gg/m/cybercraft-2):** press Play. Melty installs CyberCraft with
+everything it needs (RED4ext, redscript, ArchiveXL, Codeware), signs Prism Launcher in with your
+Minecraft account before the game starts, and keeps it up to date.
+
+**By hand:**
 
 1. Unpack `CyberCraft-<version>.zip` into the Cyberpunk 2077 folder (or install it with Vortex). It
    adds `red4ext\plugins\CyberCraft\`.
@@ -127,16 +136,20 @@ menu has **Mod Settings > CyberCraft**:
   already placed move when you change it, and friends sharing your world need the same value.
 - **Fun mode** (on by default): NPCs you hit with a sword go flying, harder with a sprint or
   Knockback, and get back up if they live. Off, a sword only takes their health.
+- **Open to friends** (on by default): your world opens to friends as it loads. Off, it stays
+  private (and closes, if it's open).
 
 ## Playing with friends
 
 Only the Minecraft world is shared (blocks, items, mobs and each other); everyone needs their own
 game with CyberCraft.
 
-1. **Host:** press **O**, choose **Open to LAN**, then **Start LAN World**. The bundled
-   [e4mc](https://modrinth.com/mod/e4mc) posts an address like `abc-def.e4mc.link` in chat. Click
-   it to copy it and send it to your friends.
-2. **Friends:** press **T** and type `/join abc-def.e4mc.link`.
+1. **Host:** just play. Your world opens to friends as it loads, and the bundled
+   [e4mc](https://modrinth.com/mod/e4mc) posts its address (like `abc-def.e4mc.link`) in chat.
+   On [Melty](https://melty.gg/m/cybercraft-2) your game is listed and friends press **Join**;
+   otherwise click the address to copy it and send it to them. **Open to friends** in Mod Settings
+   (or `bOpenToFriends = 0`) keeps your world private.
+2. **Friends:** press **Join** on Melty, or press **T** and type `/join abc-def.e4mc.link`.
 3. `/leave` takes you back to your own world. If the host closes theirs, you're sent back
    automatically.
 
@@ -183,6 +196,9 @@ bMinecraftBody = 0                  ; 1: your Minecraft legs and chest when you 
 bSync = 1                           ; 0: Minecraft's weather and Night City's stay apart
 sRain =                             ; state /weather rain sets; empty: a weather mod's once seen, else 24h_weather_rain
 sThunder =                          ; state /weather thunder sets; empty: a mod's storm once seen, else sRain's
+
+[Multiplayer]
+bOpenToFriends = 1                  ; 0: your world stays private (Mod Settings' Open to friends wins once saved)
 
 [Debug]
 bDiagnostics = 0                    ; detailed logs, and a dump of the game classes the plugin uses
