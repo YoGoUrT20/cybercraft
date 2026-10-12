@@ -202,6 +202,7 @@ public final class CyberClient {
 	/** Called at the end of every client tick. */
 	public static void clientTick(Minecraft minecraft) {
 		MirrorWorld.tick(minecraft);
+		AutoHost.tick(minecraft);
 		DiscordPresence.tick(minecraft);
 		CyberDigClient.tick(minecraft);
 		freezeWhileUnlinked(minecraft);

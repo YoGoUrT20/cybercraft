@@ -12,8 +12,9 @@ public final class CyberCraftClient implements ClientModInitializer {
 		dev.cybercraft.link.CyberLink.announceRunning();
 		DiscordPresence.start();
 		DestructionToggle.register();
-		// Multiplayer without editing files: the host opens their world to LAN (O, Open to LAN) and
-		// e4mc gives them a link; friends type /join <link> in chat, and /leave to come back.
+		// Multiplayer without editing files: the host's world opens to friends by itself (AutoHost)
+		// and e4mc gives it a link; friends type /join <link> in chat (or press Join on Melty), and
+		// /leave to come back.
 		net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback.EVENT.register((dispatcher, context) -> {
 			dispatcher.register(net.fabricmc.fabric.api.client.command.v2.ClientCommands.literal("join")
 				.then(net.fabricmc.fabric.api.client.command.v2.ClientCommands.argument("link", com.mojang.brigadier.arguments.StringArgumentType.greedyString())
@@ -30,22 +31,13 @@ public final class CyberCraftClient implements ClientModInitializer {
 			}));
 		});
 		ClientTickEvents.END_CLIENT_TICK.register(CyberClient::clientTick);
-		// Multiplayer testing on one PC: CYBERCRAFT_LAN_PORT opens the world to LAN on that port as soon
-		// as it's loaded, and CYBERCRAFT_LAN_OFFLINE lets offline (dev) clients join it.
+		// In a friend's world: Melty reads this line from the log to know the join worked. (Our own
+		// world opens to friends by itself, AutoHost.)
 		net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents.JOIN.register((handler, sender, minecraft) -> {
-			String port = System.getenv("CYBERCRAFT_LAN_PORT");
-			var server = minecraft.getSingleplayerServer();
-			if (port == null || port.isBlank() || server == null || server.isPublished()) {
-				return;
+			String friend = minecraft.getSingleplayerServer() == null ? MirrorWorld.friendAddress(minecraft) : null;
+			if (friend != null) {
+				dev.cybercraft.CyberCraft.LOG.info("CyberCraft: Melty joined: {}", friend);
 			}
-			minecraft.execute(() -> {
-				if (System.getenv("CYBERCRAFT_LAN_OFFLINE") != null) {
-					server.setUsesAuthentication(false);
-				}
-				boolean ok = server.publishServer(net.minecraft.server.MinecraftServer.MultiplayerScope.LAN, false, Integer.parseInt(port.trim()));
-				dev.cybercraft.CyberCraft.LOG.info("CyberCraft: world opened to LAN on port {} ({}{})", port.trim(), ok ? "ok" : "FAILED",
-					System.getenv("CYBERCRAFT_LAN_OFFLINE") != null ? ", offline logins allowed" : "");
-			});
 		});
 		// A guest in a friend's world: dying there kills this player's own V.
 		net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking.registerGlobalReceiver(dev.cybercraft.net.CyberNet.Died.TYPE, (payload, context) -> {

@@ -17,6 +17,10 @@ namespace cybercraft::ModSettings
 	// "Fun mode": swords send NPCs flying (Combat.cpp). Read like Enabled(); on until saved off.
 	bool FunMode();
 
+	// "Open to friends": Minecraft opens its world to friends as it loads (e4mc link, Melty's Join).
+	// Read like Enabled(); on until saved off, or [Multiplayer] bOpenToFriends in CyberCraft.ini.
+	bool OpenToFriends();
+
 	// "Minecraft scale", metres per block, as Mod Settings last saved it; nothing without Mod
 	// Settings or until it has saved CyberCraft's rows once. Read from user.ini each call (Grid.cpp
 	// asks at most twice a second).

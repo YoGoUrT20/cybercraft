@@ -552,10 +552,14 @@ namespace cybercraft
 
 		// What Minecraft hears while V isn't its to play (a save loading, CyberCraft switched off):
 		// the world, the collision epoch and the flags saying why, nothing else.
+		// Sent with every state, in menus too: Minecraft opens its world to friends as it loads unless
+		// this says otherwise.
+		std::uint32_t PrivateWorldFlag() { return ModSettings::OpenToFriends() ? 0u : proto::kCyberPrivateWorld; }
+
 		void WriteIdleState(Link& a_link, std::uint32_t a_flags)
 		{
 			proto::CyberState idle{};
-			idle.flags = a_flags;
+			idle.flags = a_flags | PrivateWorldFlag();
 			idle.worldId = kWorldId;
 			idle.collisionEpoch = epoch;
 			a_link.WriteCyberState(idle);
@@ -955,7 +959,7 @@ namespace cybercraft
 			}
 
 			proto::CyberState toMc{};
-			toMc.flags = proto::kCyberInGame;
+			toMc.flags = proto::kCyberInGame | PrivateWorldFlag();
 			if (st.gameMenuOpen) {
 				toMc.flags |= proto::kCyberMenuOpen;
 			}

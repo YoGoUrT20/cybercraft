@@ -156,6 +156,7 @@ public final class Proto {
 	public static final int CYBER_DISABLED = 1 << 4;
 	public static final int CYBER_DRAWS_HAND = 1 << 5;
 	public static final int CYBER_BODY_FIRST_PERSON = 1 << 6;
+	public static final int CYBER_PRIVATE_WORLD = 1 << 7;
 
 	// CyberState.weather
 	public static final int WEATHER_UNKNOWN = 0;

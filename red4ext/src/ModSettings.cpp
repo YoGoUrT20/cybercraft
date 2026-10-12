@@ -69,6 +69,12 @@ namespace cybercraft::ModSettings
 		return funMode.Get();
 	}
 
+	bool OpenToFriends()
+	{
+		static Toggle openToFriends(L"cyberCraftOpenToFriends", Config::GetBool(L"Multiplayer", L"bOpenToFriends", true));
+		return openToFriends.Get();
+	}
+
 	std::optional<float> MetresPerBlock()
 	{
 		// Saved as "0.750000".

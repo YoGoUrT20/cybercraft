@@ -239,6 +239,11 @@ public final class CyberLink {
 		public boolean bodyFirstPerson() {
 			return (this.flags & CYBER_BODY_FIRST_PERSON) != 0;
 		}
+
+		/** "Open to friends" is off in Cyberpunk's Mod Settings: our own world stays private. */
+		public boolean privateWorld() {
+			return (this.flags & CYBER_PRIVATE_WORLD) != 0;
+		}
 	}
 
 	/** Night City's water surface around V (see WaterGrid in the protocol). */

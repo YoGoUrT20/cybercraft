@@ -1,8 +1,9 @@
 // CyberCraft's entry in Cyberpunk's Mod Settings (jackhumbert's Mod Settings mod): "Enable
 // CyberCraft", which turns the whole mod off and on, an "Open Minecraft settings" row that opens
 // Minecraft's options screen over the game, "Minecraft scale", how big Minecraft's world is
-// against Night City (the plugin reads it from user.ini, Grid.cpp), and "Fun mode", NPCs flying
-// from sword hits (Combat.cpp).
+// against Night City (the plugin reads it from user.ini, Grid.cpp), "Fun mode", NPCs flying
+// from sword hits (Combat.cpp), and "Open to friends", whether Minecraft opens its world to friends
+// as it loads (the plugin passes it on as kCyberPrivateWorld; the Fabric mod's AutoHost).
 //
 // Mod Settings has no button, so the row is a Bool that never changes: clicking it, or left and
 // right on it, leaves a request in CyberCraftRequests and closes the pause menu the way its Resume
@@ -62,6 +63,11 @@ public class CyberCraftModSettings extends IScriptable {
   @runtimeProperty("ModSettings.displayName", "Fun mode")
   @runtimeProperty("ModSettings.description", "NPCs you hit with a sword go flying along Minecraft's knockback, harder with a sprint or Knockback, and get back up if they live. Off: they only lose health.")
   public let cyberCraftFunMode: Bool = true;
+
+  @runtimeProperty("ModSettings.mod", "CyberCraft")
+  @runtimeProperty("ModSettings.displayName", "Open to friends")
+  @runtimeProperty("ModSettings.description", "On: your world opens to friends as it loads, so they can join from CyberCraft's Melty page or your e4mc link and build or dig with you. Off: your world stays private; if it's already open, it closes and anyone in it goes back to their own.")
+  public let cyberCraftOpenToFriends: Bool = true;
 }
 
 @if(ModuleExists("ModSettingsModule"))

@@ -71,6 +71,8 @@ namespace cybercraft::proto
 		kCyberBodyFirstPerson = 1u << 6,  // V's own body is hidden in first person too: Minecraft sends its
 		                                  // body there as well (kRenAvatar), without head, arms or what it
 		                                  // holds, bodyBack blocks behind its eye
+		kCyberPrivateWorld = 1u << 7,  // "Open to friends" is off in Mod Settings: Minecraft keeps its own
+		                               // world to itself (by default it opens it to friends as it loads)
 	};
 
 	// Night City's weather as Minecraft knows weather. Unknown: leave Minecraft's alone.
