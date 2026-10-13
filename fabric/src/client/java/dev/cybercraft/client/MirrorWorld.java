@@ -23,6 +23,10 @@ public final class MirrorWorld {
 	private static @org.jspecify.annotations.Nullable String sessionJoin;
 	// Shown in chat once the player is in a world again (why they're back in their own, ...).
 	private static @org.jspecify.annotations.Nullable String pendingNote;
+	// The friend's world last connected to, until our own opens again.
+	private static @org.jspecify.annotations.Nullable String joining;
+	// Turned away while signed out: the join= address would only turn us away again, so not this session.
+	private static boolean skipJoinFile;
 
 	private MirrorWorld() {
 	}
@@ -105,9 +109,14 @@ public final class MirrorWorld {
 	public static void openWhenReady(Minecraft minecraft) {
 		// Couldn't reach a friend's world, or it closed under us: back to our own, and say why.
 		if (minecraft.gui.screen() instanceof net.minecraft.client.gui.screens.DisconnectedScreen && minecraft.level == null) {
-			pendingNote = sessionJoin != null
-				? "Couldn't stay in " + sessionJoin + " (check the link, and that your friend's world is still open to LAN). You're back in your own world."
-				: "Disconnected. You're back in your own world.";
+			if (joining != null && SignIn.offline()) {
+				pendingNote = SignIn.joinFailedNote(joining);
+				skipJoinFile = true;
+			} else {
+				pendingNote = sessionJoin != null
+					? "Couldn't stay in " + sessionJoin + " (check the link, and that your friend's world is still open to LAN). You're back in your own world."
+					: "Disconnected. You're back in your own world.";
+			}
 			CyberCraft.LOG.info("CyberCraft: disconnected; back to the mirror world");
 			sessionJoin = null;
 			attempted = false;
@@ -135,7 +144,8 @@ public final class MirrorWorld {
 		TitleScreen title = (TitleScreen) minecraft.gui.screen();
 		attempted = true;
 		// Multiplayer: join a friend's world (their e4mc link, or any server address) instead.
-		String join = sessionJoin != null ? sessionJoin : joinAddress(minecraft);
+		String join = sessionJoin != null ? sessionJoin : skipJoinFile ? null : joinAddress(minecraft);
+		joining = join;
 		if (join != null) {
 			CyberCraft.LOG.info("CyberCraft: joining {}", join);
 			pendingNote = "Joined " + join + ". Type /leave to go back to your own world.";

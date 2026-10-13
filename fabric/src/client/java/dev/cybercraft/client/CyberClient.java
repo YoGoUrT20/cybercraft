@@ -203,6 +203,7 @@ public final class CyberClient {
 	public static void clientTick(Minecraft minecraft) {
 		MirrorWorld.tick(minecraft);
 		AutoHost.tick(minecraft);
+		SignIn.tick(minecraft);
 		DiscordPresence.tick(minecraft);
 		CyberDigClient.tick(minecraft);
 		freezeWhileUnlinked(minecraft);
