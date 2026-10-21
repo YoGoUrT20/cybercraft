@@ -990,6 +990,70 @@ namespace cybercraft
 				if (rescueFrames > 0 && --rescueFrames == 0) {
 					teleportPending = true;
 				}
+				// Brought to V (a save loaded, Minecraft started), Minecraft's player can land a little
+				// into the city's ground, where V's position and its feet don't quite match, and drop
+				// through it. Watched for 2 seconds after each teleport: falling more than 2 blocks under
+				// where it was put, it's put there again a metre higher, up to three times.
+				{
+					static std::uint32_t watchedSeq = 0;
+					static float         watchFor = 0.0f;
+					static int           retries = 0;
+					static McVec         target{ 0.0, 0.0, 0.0 };
+					static bool          ours = false;  // the teleport is one of these retries
+					if (hardTeleportSeq != watchedSeq && mc.teleportAck == hardTeleportSeq) {
+						if (!ours) {
+							retries = 0;
+							target = lastTeleportMc;  // retries go up from the first spot
+						}
+						ours = false;
+						watchedSeq = hardTeleportSeq;
+						watchFor = 2.0f;
+					}
+					if (watchFor > 0.0f && puppet && rescueFrames == 0) {
+						watchFor -= delta;
+						if ((mc.flags & proto::kMcOnGround) != 0) {
+							watchFor = 0.0f;  // stood: all good
+						} else if (mc.y < target.y - 2.0 && retries < 3) {
+							++retries;
+							logger::info("teleported into the ground and fell through it (y {:.2f} under {:.2f}); again {} m higher", mc.y, target.y, retries);
+							Puppet::Place(McVec{ target.x, target.y + retries / MetresPerBlock(), target.z }, yaw);
+							rescueFrames = 2;
+							ours = true;
+							rescuing = true;
+							watchFor = 0.0f;
+						}
+					}
+				}
+				// The backstop: where Minecraft's player last stood on the ground for a second, and back
+				// there once it has fallen under y -200, wherever the city's ground is (or isn't found).
+				// A new session (a save loaded, Minecraft reconnected) forgets it.
+				static McVec lastSafe{ 0.0, 0.0, 0.0 };
+				static bool  haveSafe = false;
+				static float groundedFor = 0.0f;
+				static int   safeEpoch = -1;
+				if (safeEpoch != int(epoch)) {
+					safeEpoch = int(epoch);
+					haveSafe = false;
+					groundedFor = 0.0f;
+				}
+				if (puppet && rescueFrames == 0) {
+					const bool grounded = (mc.flags & proto::kMcOnGround) != 0 && mc.y > -200.0;
+					groundedFor = grounded ? groundedFor + delta : 0.0f;
+					if (groundedFor >= 1.0f) {
+						lastSafe = { mc.x, mc.y, mc.z };
+						haveSafe = true;
+					}
+					// Not stood anywhere yet this session (fell straight through on joining): where it was
+					// last brought to V, which is where the save put her, on Night City's ground.
+					if (mc.y < -200.0 && (haveSafe || hardTeleportSeq > 0)) {
+						const McVec back = haveSafe ? lastSafe : lastTeleportMc;
+						logger::info("fell under y -200 (at {:.1f}); back to ({:.2f}, {:.2f}, {:.2f}), {}", mc.y, back.x, back.y, back.z,
+							haveSafe ? "where Minecraft's player last stood" : "where it was last brought to V");
+						Puppet::Place(McVec{ back.x, back.y + 0.05, back.z }, yaw);
+						rescueFrames = 2;
+						rescuing = true;
+					}
+				}
 				if (puppet && rescueFrames == 0 && (checkIn -= delta) <= 0.0f) {
 					checkIn = 0.25f;
 					const bool falling = (mc.flags & proto::kMcOnGround) == 0 && mc.y < lastY - 0.5;
