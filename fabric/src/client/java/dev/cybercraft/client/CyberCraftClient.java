@@ -10,6 +10,7 @@ public final class CyberCraftClient implements ClientModInitializer {
 	@Override
 	public void onInitializeClient() {
 		dev.cybercraft.link.CyberLink.announceRunning();
+		MeltyLog.start();
 		DiscordPresence.start();
 		DestructionToggle.register();
 		// Multiplayer without editing files: the host's world opens to friends by itself (AutoHost)

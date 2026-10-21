@@ -126,6 +126,10 @@ public final class MirrorWorld {
 
 	/** Every client tick: a note for the player once they're in a world again. */
 	public static void tick(Minecraft minecraft) {
+		// In a friend's world: Melty learns the join worked.
+		if (joining != null && minecraft.player != null && minecraft.getSingleplayerServer() == null) {
+			MeltyLog.joined(joining);
+		}
 		if (pendingNote != null && minecraft.player != null) {
 			minecraft.gui.hud.getChat().addClientSystemMessage(net.minecraft.network.chat.Component.literal(pendingNote));
 			pendingNote = null;

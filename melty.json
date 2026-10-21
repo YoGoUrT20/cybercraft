@@ -108,8 +108,8 @@
     "maxPlayers": 100,
     "connect": {
       "address": {
-        "log": "{localappdata}/CyberCraft/Prism/instances/CyberCraft/.minecraft/logs/latest.log",
-        "after": "this world is open to friends at "
+        "log": "{localappdata}/CyberCraft/melty.log",
+        "after": "Melty join address: "
       },
       "joinFile": {
         "path": "{localappdata}/CyberCraft/Prism/instances/CyberCraft/.minecraft/config/cybercraft.properties",

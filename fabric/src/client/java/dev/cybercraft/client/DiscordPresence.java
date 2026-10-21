@@ -67,6 +67,7 @@ public final class DiscordPresence {
 		if (link != null) {
 			hostLink = link;
 			CyberCraft.LOG.info("CyberCraft: this world is open to friends at {}", link);
+			MeltyLog.hosting(link);
 			nextSay = System.currentTimeMillis() + RESAY_MS;
 		}
 	}
@@ -96,6 +97,7 @@ public final class DiscordPresence {
 			var server = minecraft.getSingleplayerServer();
 			if (server != null && server.isPublished()) {
 				CyberCraft.LOG.info("CyberCraft: this world is open to friends at {}", open);
+				MeltyLog.hosting(open);
 			}
 		}
 		if (now < nextDescribe) {
@@ -105,6 +107,7 @@ public final class DiscordPresence {
 		var server = minecraft.getSingleplayerServer();
 		if (server == null || !server.isPublished()) {
 			hostLink = null;
+			MeltyLog.closed();
 		}
 		JsonObject activity = null;
 		// Shown while in a world, whatever Cyberpunk is doing (a menu, a load, a dropped link).
