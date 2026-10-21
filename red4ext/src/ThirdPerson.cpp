@@ -109,7 +109,11 @@ namespace cybercraft::ThirdPerson
 	{
 		const auto& cfg = Config();
 		const bool  third = cfg.enable && (a_mode == 1 || a_mode == 2);
-		const bool  shifted = std::abs(a_eyeShift) > 0.005f;
+		// The lean-out correction (Game's TakeLeanOut) counts as a shift too: at a metre a block
+		// Minecraft's standing eye is exactly V's (no shift), and skipping the camera then left the
+		// correction unapplied while it kept building up, until sneaking applied all of it at once
+		// and the view jumped into the block ahead and back.
+		const bool  shifted = std::abs(a_eyeShift) > 0.005f || std::abs(a_lean.X) + std::abs(a_lean.Y) + std::abs(a_lean.Z) > 0.005f;
 		if (third || cfg.hideV) {
 			HideBody();
 		} else {
