@@ -995,13 +995,21 @@ namespace cybercraft
 					const bool falling = (mc.flags & proto::kMcOnGround) == 0 && mc.y < lastY - 0.5;
 					lastY = mc.y;
 					if (falling) {
-						auto&      collision = Collision::Get();
-						const auto under = collision.FirstHitY(McVec{ mc.x, mc.y + 2.0, mc.z }, McVec{ mc.x, mc.y + 48.0, mc.z });
-						const auto surface = under ? collision.FirstHitY(McVec{ mc.x, *under + 4.0, mc.z }, McVec{ mc.x, *under - 0.5, mc.z })
-												  : collision.FirstHitY(McVec{ mc.x, mc.y + 48.0, mc.z }, McVec{ mc.x, mc.y + 2.0, mc.z });
-						const auto bx = std::int32_t(std::floor(mc.x)), by = std::int32_t(std::floor(mc.y)), bz = std::int32_t(std::floor(mc.z));
+						// Only rays looking down: one looking up from under the street crashed the game
+						// inside its physics. Started 8 blocks over the feet and then higher, so the
+						// first one to find something finds the lowest ground over them (a ray that
+						// starts inside the ground finds it where it starts: higher, then).
+						auto&                 collision = Collision::Get();
 						// Nothing under the feet either (a jump off a ledge under a bridge has the bridge over it).
-						const bool void_ = !collision.FirstHitY(McVec{ mc.x, mc.y, mc.z }, McVec{ mc.x, mc.y - 32.0, mc.z });
+						const bool            void_ = !collision.FirstHitY(McVec{ mc.x, mc.y, mc.z }, McVec{ mc.x, mc.y - 32.0, mc.z });
+						std::optional<double> surface;
+						for (double over = 8.0; void_ && over <= 48.0 && !surface; over += 8.0) {
+							const auto hit = collision.FirstHitY(McVec{ mc.x, mc.y + over, mc.z }, McVec{ mc.x, mc.y + 2.0, mc.z });
+							if (hit && *hit < mc.y + over - 0.05) {
+								surface = hit;
+							}
+						}
+						const auto bx = std::int32_t(std::floor(mc.x)), by = std::int32_t(std::floor(mc.y)), bz = std::int32_t(std::floor(mc.z));
 						if (void_ && surface && *surface - mc.y > 6.0 && !World::DugAt(mc.x, *surface - 0.5, mc.z) &&
 							!Builds::AnySolid(bx - 3, by - 4, bz - 3, bx + 4, std::int32_t(std::ceil(*surface)) + 1, bz + 4)) {
 							logger::info("fell through Night City's ground: Minecraft's player at y {:.2f}, {:.2f} blocks under it; brought back up", mc.y, *surface - mc.y);
