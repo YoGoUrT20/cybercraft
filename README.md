@@ -139,8 +139,8 @@ menu has **Mod Settings > CyberCraft**:
   when the game starts, Minecraft isn't started at all until it's turned on.
 - **Open Minecraft settings** closes the menu and opens Minecraft's options (video, sound,
   controls, skin) over the game.
-- **Minecraft scale** is how many metres a Minecraft block is in Night City (0.75; 1 makes a block
-  a metre and you as tall as V). Blocks, mobs, players and your view all scale with it. Blocks you
+- **Minecraft scale** is how many metres a Minecraft block is in Night City (1: a block is a
+  metre and you as tall as V, with Minecraft's own proportions). Blocks, mobs, players and your view all scale with it. Blocks you
   already placed move when you change it, and friends sharing your world need the same value.
 - **Fun mode** (on by default): NPCs you hit with a sword go flying, harder with a sprint or
   Knockback, and get back up if they live. Off, a sword only takes their health.
@@ -185,7 +185,7 @@ fRememberSeconds = 30               ; how long a hit or targeted NPC stays in th
 fSwordFling = 250                   ; how far a sword hit sends an NPC flying in fun mode; 0: not at all
 
 [World]
-fMetresPerBlock = 0.75              ; how big a Minecraft block is in Night City; 1: a metre, as tall as V
+fMetresPerBlock = 1                 ; how big a Minecraft block is in Night City; 1: a metre, as tall as V
 bSceneDepth = 1                     ; hide blocks behind the city using the game's depth (DLSS)
 bHudMask = 1                        ; keep blocks under the game's HUD (needs frame generation on)
 fLightGain = 1.7                    ; how bright Night City's light makes blocks, mobs and your hand

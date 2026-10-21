@@ -981,7 +981,7 @@ namespace cybercraft
 			}
 			// Minecraft's F5: Cyberpunk's camera pulled back. V hidden (in first person too), and
 			// Minecraft's body drawn at the feet V stands on. And in any view, the camera at
-			// Minecraft's eye (1.95 blocks standing, so lower than V's own below a metre a block).
+			// Minecraft's eye (1.62 blocks standing: V's own at a metre a block, lower below it).
 			if (puppet) {
 				const float eyeShift = mc.eyeHeight > 0.0f ? float(mc.eyeHeight * MetresPerBlock() - kCyberpunkEyeHeight) : 0.0f;
 				const McVec eyeMc{ feet.x, feet.y + mc.eyeHeight, feet.z };

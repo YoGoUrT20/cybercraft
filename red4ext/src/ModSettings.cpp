@@ -77,8 +77,8 @@ namespace cybercraft::ModSettings
 
 	std::optional<float> MetresPerBlock()
 	{
-		// Saved as "0.750000".
-		const auto text = ReadValue(L"cyberCraftMetresPerBlock");
+		// Saved as "1.000000".
+		const auto text = ReadValue(L"cyberCraftBlockMetres");
 		wchar_t*   end = nullptr;
 		const auto value = std::wcstof(text.c_str(), &end);
 		if (text.empty() || end == text.c_str() || !std::isfinite(value) || value <= 0.0f) {

@@ -68,11 +68,11 @@ sides follow (§10).
 ## 4. Coordinate mapping
 
 Cyberpunk is Z-up and in metres; Minecraft is Y-up and in blocks. **A block is `s` metres**
-(`[World] fMetresPerBlock`, or Mod Settings' "Minecraft scale"; 0.75 by default). At 1 the
-Minecraft player is as tall as V, but Minecraft's blocks and its blocky bodies (a head half a block
-wide, shoulders a block across) looked oversized next to Night City's people and props, so the
-whole of Minecraft's world is scaled down: blocks, mobs, players, and Minecraft's physics with them
-(V walks, jumps and reaches `s` times as far in metres).
+(`[World] fMetresPerBlock`, or Mod Settings' "Minecraft scale"; 1 by default, 0.75 before 0.2.11).
+At 1 the Minecraft player is as tall as V and sees from V's eye height, with Minecraft's own
+proportions between the player and blocks. Below 1 the whole of Minecraft's world is scaled down:
+blocks, mobs, players, and Minecraft's physics with them (V walks, jumps and reaches `s` times as
+far in metres).
 
 ```
 mc.x =  cp.x / s
@@ -89,10 +89,10 @@ both scale with it unchanged. What's left are lengths that cross between the two
 against the game's (metres), third person's camera distance, NPC boxes (0.6 × 1.8 m, in blocks),
 colliders and light radii for builds, search radii.
 
-- **Eye height.** Cyberpunk's camera is moved to Minecraft's eye, `1.95·s` above V's feet (the
-  camera is taken to stand at 1.62 m), so below a metre a block V sees the city from lower down.
-  Players' eyes are raised from vanilla's 1.62 blocks (AvatarEyeMixin): at 0.75 m a block that put
-  the camera at the shoulders of Night City's people.
+- **Eye height.** Cyberpunk's camera is moved to Minecraft's eye, `1.62·s` above V's feet (the
+  camera is taken to stand at 1.62 m), so at the default metre a block it stays where V's is.
+  Releases before 0.2.11 raised players' eyes to 1.95 blocks to make up for 0.75 m blocks, which
+  put the eye above the player's box (inside a block over the head) and off Minecraft's proportions.
   Minecraft picks blocks and entities from its eye; a camera anywhere else would put them off the
   crosshair.
 - **Changing the scale** while playing sends everything again, as `Insert` does. Blocks keep their

@@ -75,7 +75,7 @@ namespace cybercraft
 	// the player and its physics. At 1 a block is a metre and Minecraft's player as tall as V, but
 	// next to Night City's people and props its blocks and blocky bodies look oversized. Set by
 	// Grid.cpp ([World] fMetresPerBlock, or Mod Settings' slider).
-	inline constexpr double    kDefaultMetresPerBlock = 0.75;
+	inline constexpr double    kDefaultMetresPerBlock = 1.0;
 	inline std::atomic<double> gMetresPerBlock{ kDefaultMetresPerBlock };
 
 	// Minecraft's grid is shifted up by this many metres (0 up to a block) against Cyberpunk's

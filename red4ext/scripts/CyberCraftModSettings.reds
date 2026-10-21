@@ -53,11 +53,13 @@ public class CyberCraftModSettings extends IScriptable {
 
   @runtimeProperty("ModSettings.mod", "CyberCraft")
   @runtimeProperty("ModSettings.displayName", "Minecraft scale")
-  @runtimeProperty("ModSettings.description", "Metres of Night City per Minecraft block. Blocks, mobs, players and you scale with it, and your view sits at Minecraft's eye. 1: a block is a metre and Minecraft's player as tall as V. Blocks you placed move with it, and everyone in a shared world needs the same.")
+  @runtimeProperty("ModSettings.description", "Metres of Night City per Minecraft block. Blocks, mobs, players and you scale with it, and your view sits at Minecraft's eye. 1 (the default): a block is a metre and Minecraft's player as tall as V, as in Minecraft. Blocks you placed move with it, and everyone in a shared world needs the same.")
   @runtimeProperty("ModSettings.step", "0.05")
   @runtimeProperty("ModSettings.min", "0.4")
   @runtimeProperty("ModSettings.max", "1.0")
-  public let cyberCraftMetresPerBlock: Float = 0.75;
+  // Renamed from cyberCraftMetresPerBlock with the default going from 0.75 to 1 (0.2.11): a 0.75
+  // saved by an older release, as Mod Settings saves the whole page, isn't kept.
+  public let cyberCraftBlockMetres: Float = 1.0;
 
   @runtimeProperty("ModSettings.mod", "CyberCraft")
   @runtimeProperty("ModSettings.displayName", "Fun mode")

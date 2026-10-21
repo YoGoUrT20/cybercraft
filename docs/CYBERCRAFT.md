@@ -345,9 +345,8 @@ Minecraft sends each texture once, so they never came back. Never-used slots are
 not yet confirmed in a run.
 
 In every view the camera also stands at Minecraft's eye, its height in blocks times the scale
-(see "Minecraft's scale"): 1.95 standing (vanilla's 1.62 raised by AvatarEyeMixin, 25 cm at 0.75 m
-a block), which at less than a metre a block is below V's own camera, and lower still sneaking
-(1.45), crawling and swimming. Straight down in the world, which in
+(see "Minecraft's scale"): 1.62 standing, Minecraft's own, which at the default metre a block is
+V's own camera height, and lower still sneaking (1.27), crawling and swimming. Straight down in the world, which in
 the pitched frame is down and along the look. Minecraft eases its eye down over a few ticks; in first person
 `McState::eyeHeight` is the camera's eased height already, and in third person the Fabric side
 eases it the same way instead of sending the eye's snap.
@@ -454,13 +453,13 @@ isn't started; turning it on starts it. **Not yet confirmed in a run.**
 
 ### Minecraft's scale
 
-A Minecraft block is `fMetresPerBlock` metres in Night City, 0.75 by default, or what Mod Settings'
+A Minecraft block is `fMetresPerBlock` metres in Night City, 1 by default (0.75 before 0.2.11), or what Mod Settings'
 **Minecraft scale** slider (0.4 to 1) last saved. At 1 blocks, mobs and Minecraft's player looked
 oversized next to Night City: the player as tall as V but twice as broad, a cow or a chicken far
 bigger than life. The whole of Minecraft's world is scaled, physics included, so blocks still line
 up with the player and mobs with blocks; V walks, jumps and reaches less far in metres, NPCs are
 taller in blocks (their boxes are 0.6 × 1.8 m), and Cyberpunk's camera sits at Minecraft's eye,
-`1.95 × scale` above V's feet. That assumes Cyberpunk's own camera stands 1.62 m up; if it doesn't,
+`1.62 × scale` above V's feet. That assumes Cyberpunk's own camera stands 1.62 m up; if it doesn't,
 blocks picked are slightly off the crosshair vertically, as they were at a metre a block.
 
 The plugin re-reads the scale twice a second; a change resends the city's collision, respawns the
@@ -701,7 +700,7 @@ fRememberSeconds = 30
 fSwordFling = 250                  ; ragdoll impulse per unit of a sword's Minecraft knockback; 0: off
 
 [World]
-fMetresPerBlock = 0.75             ; Minecraft's scale: metres per block (Mod Settings' slider wins once saved)
+fMetresPerBlock = 1                ; Minecraft's scale: metres per block (Mod Settings' slider wins once saved)
 bSceneDepth = 1                    ; borrow Cyberpunk's depth through Streamline (DLSS)
 bHudMask = 1                       ; blocks under Cyberpunk's HUD (needs frame generation on); 0: over it
 iOcclusionRays = 400               ; face rays per frame without it
