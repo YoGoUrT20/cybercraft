@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(CyberCraft VERSION 0.2.9 LANGUAGES CXX)
+project(CyberCraft VERSION 0.2.10 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

@@ -21,7 +21,7 @@ namespace cybercraft::World
 cbuffer Params : register(b0) {
 	float4x4 viewProj;
 	float3 origin; float drawPass;
-	float4 light;        // x: daylight 0..1 (only without the scene picture)
+	float4 light;        // x: daylight 0..1; y: how far the eye is down a hole dug into the city (0..1)
 	float4 eye;          // xyz: the camera, Minecraft coordinates; w: metres per block
 	float4 forward;      // xyz: where it looks (unit)
 	float4 depthParams;  // near, far, inverted, enabled: Cyberpunk's depth (SceneDepth)
@@ -337,9 +337,13 @@ float4 PSMain(VSOut i) : SV_Target {
 		// light doesn't reach it.
 		float open = lerp(0.15, 1.0, i.lightPair.y);
 		lit = saturate(tint * sceneParams.y * open + sceneParams.z);
+		// Down a hole dug into the city, what's round a face in the picture is Cyberpunk's underside
+		// (it draws nothing under its streets), not light: there the blocks take Minecraft's own, the
+		// sky's falling off as the hole shuts in, at Night City's time of day.
+		lit = lerp(lit, lerp(0.08, 1.0, i.lightPair.y * light.x).xxx, light.y);
 		// Torches and lamps among the blocks, warm, falling off as Minecraft's light does.
 		lit += float3(1.0, 0.78, 0.52) * (i.lightPair.x * i.lightPair.x * tone.w);
-		shade = lerp(1.0, shade, tone.y);
+		shade = lerp(1.0, shade, lerp(tone.y, 1.0, light.y));
 	} else {
 		lit = lerp(0.08, 1.0, max(i.lightPair.x, i.lightPair.y * light.x)).xxx;
 	}
@@ -351,7 +355,7 @@ float4 PSMain(VSOut i) : SV_Target {
 	}
 	// Further off, the block fades into the picture behind it, as Night City's haze takes its own.
 	if (sceneParams.x > 0.5 && tone.z > 0) {
-		color = lerp(color, i.haze, (1.0 - exp(-length(i.world - eye.xyz) * eye.w * tone.z)) * 0.85);
+		color = lerp(color, i.haze, (1.0 - exp(-length(i.world - eye.xyz) * eye.w * tone.z)) * 0.85 * (1.0 - light.y));
 	}
 	// Seen through Night City's water (the block under it, or the eye): it fades into the water
 	// around it by how far the sight line runs under the surface, as the game's own things do. The
@@ -2113,6 +2117,18 @@ float4 PSOver(float4 pos : SV_Position) : SV_Target {
 		Params params{};
 		dx::XMStoreFloat4x4(&params.viewProj, dx::XMMatrixMultiply(view, projection));
 		params.light[0] = cybercraft::State().daylight.load();
+		// The eye down a hole dug into the city: blocks there go over to Minecraft's own light (the
+		// shader), eased in and out over a quarter second so climbing out doesn't flash.
+		{
+			static float underground = 0.0f;
+			static auto  last = std::chrono::steady_clock::now();
+			const auto   now = std::chrono::steady_clock::now();
+			const float  step = std::min(std::chrono::duration<float>(now - last).count() * 4.0f, 1.0f);
+			last = now;
+			const float target = DugAt(eyeX, eyeY, eyeZ) ? 1.0f : 0.0f;
+			underground += (target - underground) * step;
+			params.light[1] = underground;
+		}
 		dx::XMFLOAT3 look;
 		dx::XMStoreFloat3(&look, dx::XMVector3Normalize(forward));
 		params.eye[0] = float(eyeX);
