@@ -148,6 +148,8 @@ namespace cybercraft
 			// back to Cyberpunk's eye height for those few frames: V bobbed up and down on every nudge.
 			std::uint32_t  hardTeleportSeq = 1;   // the last teleport that wasn't a nudge
 			bool           softPending = false;
+			// Frames until Minecraft's player follows V up out of a fall through the city's ground.
+			int            rescueFrames = 0;
 			McVec          softTarget{ 0.0, 0.0, 0.0 };
 			// Seconds V is still held after Minecraft arrived from a nudge: the tick it reports next
 			// still starts where it was, and ticks from before are in the grid's old coordinates.
@@ -976,10 +978,44 @@ namespace cybercraft
 						Collision::Get().DescribeAhead(McVec{ mc.x, mc.y, mc.z }, dx, dz));
 				}
 			}
+			// Fallen through Night City's ground (a gap in its collision): Minecraft's player would fall
+			// for ever under the city. Falling, more than 6 blocks under the ground over it, nothing
+			// under it for 32 blocks, none of the player's blocks around and no hole dug there: V is put on that ground, and
+			// Minecraft's player brought up to her the frame after (a teleport, which also forgets the
+			// fall).
+			bool rescuing = rescueFrames > 0;  // V is held where she was put until the teleport
+			{
+				static float  checkIn = 0.0f;
+				static double lastY = 0.0;
+				if (rescueFrames > 0 && --rescueFrames == 0) {
+					teleportPending = true;
+				}
+				if (puppet && rescueFrames == 0 && (checkIn -= delta) <= 0.0f) {
+					checkIn = 0.25f;
+					const bool falling = (mc.flags & proto::kMcOnGround) == 0 && mc.y < lastY - 0.5;
+					lastY = mc.y;
+					if (falling) {
+						auto&      collision = Collision::Get();
+						const auto under = collision.FirstHitY(McVec{ mc.x, mc.y + 2.0, mc.z }, McVec{ mc.x, mc.y + 48.0, mc.z });
+						const auto surface = under ? collision.FirstHitY(McVec{ mc.x, *under + 4.0, mc.z }, McVec{ mc.x, *under - 0.5, mc.z })
+												  : collision.FirstHitY(McVec{ mc.x, mc.y + 48.0, mc.z }, McVec{ mc.x, mc.y + 2.0, mc.z });
+						const auto bx = std::int32_t(std::floor(mc.x)), by = std::int32_t(std::floor(mc.y)), bz = std::int32_t(std::floor(mc.z));
+						// Nothing under the feet either (a jump off a ledge under a bridge has the bridge over it).
+						const bool void_ = !collision.FirstHitY(McVec{ mc.x, mc.y, mc.z }, McVec{ mc.x, mc.y - 32.0, mc.z });
+						if (void_ && surface && *surface - mc.y > 6.0 && !World::DugAt(mc.x, *surface - 0.5, mc.z) &&
+							!Builds::AnySolid(bx - 3, by - 4, bz - 3, bx + 4, std::int32_t(std::ceil(*surface)) + 1, bz + 4)) {
+							logger::info("fell through Night City's ground: Minecraft's player at y {:.2f}, {:.2f} blocks under it; brought back up", mc.y, *surface - mc.y);
+							Puppet::Place(McVec{ mc.x, *surface + 0.05, mc.z }, yaw);
+							rescueFrames = 2;
+							rescuing = true;
+						}
+					}
+				}
+			}
 			// In what Minecraft dug out of the city, and a moment after (she's wider than its player).
 			collisionOffLinger = puppet && InDugCity(feet) ? 0.5f : std::max(0.0f, collisionOffLinger - delta);
 			SyncCollisionOff(puppet && collisionOffLinger > 0.0f, delta);
-			if (puppet && softHold <= 0.0f) {
+			if (puppet && softHold <= 0.0f && !rescuing) {
 				Puppet::Apply(feet, st.yaw, CpVec{ pos.X, pos.Y, pos.Z }, yaw, (mc.flags & proto::kMcOnGround) != 0);
 				st.lastPuppeted = now;
 			}

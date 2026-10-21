@@ -37,6 +37,10 @@ namespace cybercraft::Builds
 	// colliders are as Static as the city and Minecraft has the blocks anyway.
 	bool Filled(std::int32_t a_x0, std::int32_t a_y0, std::int32_t a_z0, std::int32_t a_x1, std::int32_t a_y1, std::int32_t a_z1);
 
+	// Any block of that box is one of the player's solid blocks (sections Minecraft has sent; those
+	// near the player). Main thread.
+	bool AnySolid(std::int32_t a_x0, std::int32_t a_y0, std::int32_t a_z0, std::int32_t a_x1, std::int32_t a_y1, std::int32_t a_z1);
+
 	// Everything spawned goes, and is spawned again where it belongs (the grid moved, Minecraft
 	// reconnected). Main thread.
 	void Respawn();

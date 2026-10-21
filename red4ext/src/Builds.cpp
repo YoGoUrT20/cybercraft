@@ -401,6 +401,27 @@ namespace cybercraft::Builds
 		return true;
 	}
 
+	bool AnySolid(std::int32_t a_x0, std::int32_t a_y0, std::int32_t a_z0, std::int32_t a_x1, std::int32_t a_y1, std::int32_t a_z1)
+	{
+		const auto floorDiv = [](std::int32_t a_v) { return a_v >= 0 ? a_v / 16 : -((15 - a_v) / 16); };
+		for (auto y = a_y0; y < a_y1; ++y) {
+			for (auto z = a_z0; z < a_z1; ++z) {
+				for (auto x = a_x0; x < a_x1; ++x) {
+					const auto sx = floorDiv(x), sy = floorDiv(y), sz = floorDiv(z);
+					const auto section = sections.find(Key(sx, sy, sz));
+					if (section == sections.end() || !section->second.solids) {
+						continue;
+					}
+					const int i = (x - sx * 16) + 16 * (z - sz * 16) + 256 * (y - sy * 16);
+					if ((((*section->second.solids)[i >> 3] >> (i & 7)) & 1) != 0) {
+						return true;
+					}
+				}
+			}
+		}
+		return false;
+	}
+
 	void Respawn()
 	{
 		if (Scripts::Ready()) {
