@@ -989,6 +989,7 @@ namespace cybercraft
 				static double lastY = 0.0;
 				if (rescueFrames > 0 && --rescueFrames == 0) {
 					teleportPending = true;
+					rescuing = true;  // and nothing else this frame: Minecraft's player is still down there
 				}
 				// Brought to V (a save loaded, Minecraft started), Minecraft's player can land a little
 				// into the city's ground, where V's position and its feet don't quite match, and drop
@@ -1009,7 +1010,7 @@ namespace cybercraft
 						watchedSeq = hardTeleportSeq;
 						watchFor = 2.0f;
 					}
-					if (watchFor > 0.0f && puppet && rescueFrames == 0) {
+					if (watchFor > 0.0f && puppet && !rescuing) {
 						watchFor -= delta;
 						if ((mc.flags & proto::kMcOnGround) != 0) {
 							watchFor = 0.0f;  // stood: all good
@@ -1036,7 +1037,7 @@ namespace cybercraft
 					haveSafe = false;
 					groundedFor = 0.0f;
 				}
-				if (puppet && rescueFrames == 0) {
+				if (puppet && !rescuing) {
 					const bool grounded = (mc.flags & proto::kMcOnGround) != 0 && mc.y > -200.0;
 					groundedFor = grounded ? groundedFor + delta : 0.0f;
 					if (groundedFor >= 1.0f) {
@@ -1054,7 +1055,7 @@ namespace cybercraft
 						rescuing = true;
 					}
 				}
-				if (puppet && rescueFrames == 0 && (checkIn -= delta) <= 0.0f) {
+				if (puppet && !rescuing && (checkIn -= delta) <= 0.0f) {
 					checkIn = 0.25f;
 					const bool falling = (mc.flags & proto::kMcOnGround) == 0 && mc.y < lastY - 0.5;
 					lastY = mc.y;

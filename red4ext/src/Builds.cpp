@@ -193,6 +193,13 @@ namespace cybercraft::Builds
 						section.lights.push_back({ message.sx * 16 + light.x, message.sy * 16 + light.y, message.sz * 16 + light.z, light.color, light.level });
 					}
 				} else {
+					// Minecraft sends a section again whenever it re-renders it (water flowing, light
+					// changing), mostly with the same blocks: its colliders were all despawned and
+					// spawned again each time, thousands a minute, until the game's entity system
+					// crashed. Only a change of blocks makes new ones.
+					if (message.solids == section.solids) {
+						continue;
+					}
 					section.boxes = message.solids ? Merge(message.sx, message.sy, message.sz, *message.solids) : std::vector<Box>{};
 					section.solids = message.solids;
 					section.stale = true;
