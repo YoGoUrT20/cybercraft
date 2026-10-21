@@ -357,10 +357,14 @@ namespace cybercraft
 				const auto   target = McToCp(a_eyeMc.x, a_eyeMc.y, a_eyeMc.z);
 				const double ex = double(target.x) - lastCameraWorld.W.X, ey = double(target.y) - lastCameraWorld.W.Y,
 							 ez = double(target.z) - lastCameraWorld.W.Z;
-				constexpr double kGain = 0.5, kMost = 0.6;
-				forward = std::clamp(forward + kGain * (ex * fx + ey * fy), -kMost, kMost);
-				side = std::clamp(side + kGain * (ex * rx + ey * ry), -kMost, kMost);
-				up = std::clamp(up + kGain * ez, -kMost, kMost);
+				// A quarter of it at a time, and nothing for the last 2 cm: turning moves V's head a little
+				// each frame, and chasing that half a frame behind made the view jiggle as you looked
+				// around standing still (applied all the time since 0.2.12).
+				constexpr double kGain = 0.25, kMost = 0.6, kDead = 0.02;
+				const auto       step = [](double a_error) { return std::abs(a_error) <= kDead ? 0.0 : a_error - std::copysign(kDead, a_error); };
+				forward = std::clamp(forward + kGain * step(ex * fx + ey * fy), -kMost, kMost);
+				side = std::clamp(side + kGain * step(ex * rx + ey * ry), -kMost, kMost);
+				up = std::clamp(up + kGain * step(ez), -kMost, kMost);
 				// Into the camera's own axes (its local frame's, with the orientation it is left at).
 				const double wx = forward * fx + side * rx, wy = forward * fy + side * ry, wz = up;
 				const auto&  x = lastCameraWorld.X;
