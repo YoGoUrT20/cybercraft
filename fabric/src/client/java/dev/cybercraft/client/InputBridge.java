@@ -49,7 +49,7 @@ public final class InputBridge {
 				}
 				if (a != 0 && clickLogs++ < 20) {
 					var hit = minecraft.hitResult;
-					dev.cybercraft.CyberCraft.LOG.info("CyberCraft: click {} -> {} {} (grabbed {}, screen {})", code, hit == null ? "null" : hit.getType(),
+					dev.cybercraft.CyberCraft.LOG.debug("CyberCraft: click {} -> {} {} (grabbed {}, screen {})", code, hit == null ? "null" : hit.getType(),
 						hit instanceof net.minecraft.world.phys.EntityHitResult eh ? eh.getEntity().getName().getString() : hit == null ? "" : hit.getLocation(),
 						minecraft.mouseHandler.isMouseGrabbed(), minecraft.gui.screen());
 				}

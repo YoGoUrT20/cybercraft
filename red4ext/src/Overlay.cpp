@@ -818,8 +818,29 @@ float4 PSMain(VSOut i) : SV_Target {
 
 		const Hooked& Find(IUnknown* a_object)
 		{
-			// Only ever called from our hooks, which only sit in vtables listed here.
-			return *Find(*reinterpret_cast<void***>(a_object));
+			// Our hooks sit in the vtables listed here, but another overlay (Steam's, Discord's, RTSS,
+			// a frame generation proxy) can copy a hooked vtable into one of its own and call us
+			// through that: then its Present is dxgi's, which is the first one hooked.
+			if (const auto* hooked = Find(*reinterpret_cast<void***>(a_object))) {
+				return *hooked;
+			}
+			return presentHooks[0];
+		}
+
+		// A fault in drawing Minecraft (a driver, another overlay, a game update moving something)
+		// must not take Cyberpunk down: the overlay turns itself off and the game carries on.
+		std::atomic<bool> drawFaulted{ false };
+
+		void Draw(IDXGISwapChain* a_swapChain);
+
+		bool GuardedDraw(IDXGISwapChain* a_swapChain)
+		{
+			__try {
+				Draw(a_swapChain);
+				return true;
+			} __except (EXCEPTION_EXECUTE_HANDLER) {
+				return false;
+			}
 		}
 
 		void Draw(IDXGISwapChain* a_swapChain)
@@ -841,10 +862,13 @@ float4 PSMain(VSOut i) : SV_Target {
 		template <class Fn>
 		HRESULT Present(IDXGISwapChain* a_swapChain, Fn&& a_original)
 		{
-			if (presenting) {
+			if (presenting || drawFaulted.load()) {
 				return a_original();
 			}
-			Draw(a_swapChain);
+			if (!GuardedDraw(a_swapChain)) {
+				drawFaulted.store(true);
+				logger::error("overlay: drawing Minecraft into the frame faulted; the overlay is off until the game restarts (the game keeps running)");
+			}
 			presenting = true;
 			const HRESULT result = a_original();
 			presenting = false;

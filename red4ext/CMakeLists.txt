@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(CyberCraft VERSION 0.2.6 LANGUAGES CXX)
+project(CyberCraft VERSION 0.2.8 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -19,7 +19,10 @@ target_link_libraries(CyberCraft PRIVATE RED4ext::SDK d3d12.lib dxgi.lib d3dcomp
 target_compile_definitions(CyberCraft PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN CYBERCRAFT_VERSION="${PROJECT_VERSION}"
 	CYBERCRAFT_VERSION_MAJOR=${PROJECT_VERSION_MAJOR} CYBERCRAFT_VERSION_MINOR=${PROJECT_VERSION_MINOR} CYBERCRAFT_VERSION_PATCH=${PROJECT_VERSION_PATCH})
 if(MSVC)
-	target_compile_options(CyberCraft PRIVATE /W4 /permissive- /Zc:preprocessor /utf-8 /MP /wd4200 /wd4100)
+	target_compile_options(CyberCraft PRIVATE /W4 /permissive- /Zc:preprocessor /utf-8 /MP /wd4200 /wd4100
+		# /EHa: a fault caught by the guards round the per-frame work (Main.cpp, Overlay.cpp) still
+		# unwinds, so the locks it held are let go.
+		/EHa)
 	target_link_options(CyberCraft PRIVATE /DEBUG:FULL)
 endif()
 

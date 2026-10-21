@@ -9,9 +9,26 @@
 
 namespace
 {
+	// A fault in CyberCraft's per-frame work must not close Cyberpunk (its own crash reporter would
+	// take the game down without a word): CyberCraft stops for this session and the game carries on.
+	std::atomic<bool> tickFaulted{ false };
+
+	bool GuardedTick()
+	{
+		__try {
+			cybercraft::Game::Tick();
+			return true;
+		} __except (EXCEPTION_EXECUTE_HANDLER) {
+			return false;
+		}
+	}
+
 	bool OnRunningUpdate(RED4ext::CGameApplication*)
 	{
-		cybercraft::Game::Tick();
+		if (!tickFaulted.load() && !GuardedTick()) {
+			tickFaulted.store(true);
+			logger::error("CyberCraft faulted in its per-frame work and has stopped for this session; Cyberpunk keeps running");
+		}
 		return false;  // keep updating (ignored for the Running state)
 	}
 }
@@ -23,7 +40,7 @@ RED4EXT_C_EXPORT bool RED4EXT_CALL Main(RED4ext::v1::PluginHandle a_handle, RED4
 	case RED4ext::v1::EMainReason::Load:
 		{
 			Config::Init();
-			log::Init(Config::GameDir() / L"red4ext" / L"logs" / L"CyberCraft.log");
+			log::Init(Config::GameDir() / L"red4ext" / L"logs");
 			logger::info("CyberCraft {} loading (game {}.{}{})", CYBERCRAFT_VERSION, a_sdk->runtime->major, a_sdk->runtime->minor, a_sdk->runtime->patch);
 			if (!Link::Get().Create()) {
 				logger::error("CyberCraft disabled: could not create shared memory");

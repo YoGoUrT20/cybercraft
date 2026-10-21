@@ -109,7 +109,7 @@ public abstract class FlowingFluidMixin {
 		}
 		if (cybercraft$logged++ < 4) {
 			FluidState fluid = sourceState.getFluidState();
-			dev.cybercraft.CyberCraft.LOG.info("CyberCraft: fluid flow refused ({}): {} -> {} going {}, fluid {} amount {}, city ground height there {}", why,
+			dev.cybercraft.CyberCraft.LOG.debug("CyberCraft: fluid flow refused ({}): {} -> {} going {}, fluid {} amount {}, city ground height there {}", why,
 				sourcePos.toShortString(), targetPos.toShortString(), direction, fluid.getType(), fluid.getAmount(), String.format("%.2f", ground));
 		}
 	}

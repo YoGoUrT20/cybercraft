@@ -4,11 +4,11 @@
 #include <format>
 #include <string_view>
 
-// A small thread-safe file log (red4ext/logs/CyberCraft.log), flushed on every line so it survives
+// A small thread-safe file log (red4ext/logs/CyberCraft-<date>-<time>.log), flushed on every line so it survives
 // a crash. `logger::info(...)` takes std::format arguments.
 namespace cybercraft::log
 {
-	void Init(const std::filesystem::path& a_file);
+	void Init(const std::filesystem::path& a_dir);
 	void Write(std::string_view a_level, std::string_view a_message);
 
 	template <class... Args>

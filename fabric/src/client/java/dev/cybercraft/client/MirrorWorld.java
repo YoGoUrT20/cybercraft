@@ -28,7 +28,33 @@ public final class MirrorWorld {
 	// Turned away while signed out: the join= address would only turn us away again, so not this session.
 	private static boolean skipJoinFile;
 
+	// The damaged world was set aside once this session: not again, whatever the next one does.
+	private static boolean setAsideOnce;
+
 	private MirrorWorld() {
+	}
+
+	/** The screens Minecraft shows when a world won't open (its data or datapacks can't be read). */
+	private static boolean isLoadFailure(net.minecraft.client.gui.screens.Screen screen) {
+		String name = screen.getClass().getSimpleName();
+		return name.contains("DatapackLoadFailure") || name.contains("RecoverWorldData") || name.contains("BackupConfirm");
+	}
+
+	private static void setAside(Minecraft minecraft) {
+		java.nio.file.Path saves = minecraft.gameDirectory.toPath().resolve("saves");
+		java.nio.file.Path world = saves.resolve(CyberCraft.WORLD_NAME);
+		String stamp = java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm-ss"));
+		java.nio.file.Path aside = saves.resolve(CyberCraft.WORLD_NAME + " (damaged " + stamp + ")");
+		try {
+			java.nio.file.Files.move(world, aside);
+			CyberCraft.LOG.warn("CyberCraft: the CyberCraft world couldn't be opened (its files are damaged); moved it to {} and starting a fresh one", aside);
+			pendingNote = "Your CyberCraft world's files were damaged and it couldn't be opened, so a fresh one was started. The old one is kept in saves as \"" + aside.getFileName() + "\".";
+		} catch (java.io.IOException e) {
+			CyberCraft.LOG.warn("CyberCraft: the CyberCraft world couldn't be opened, and moving it aside failed", e);
+			return;
+		}
+		attempted = false;
+		minecraft.gui.setScreen(new TitleScreen());
 	}
 
 	/**
@@ -121,6 +147,14 @@ public final class MirrorWorld {
 			sessionJoin = null;
 			attempted = false;
 			minecraft.gui.setScreen(new TitleScreen());
+			return;
+		}
+		// Our own world wouldn't load (its files damaged, say by a PC switched off mid-save: "Overworld
+		// settings missing"): Minecraft would sit on its error screen for the whole session, and
+		// Cyberpunk without Minecraft. The damaged world is kept aside, renamed, and a fresh one made.
+		if (attempted && joining == null && minecraft.level == null && minecraft.gui.screen() != null && !setAsideOnce && isLoadFailure(minecraft.gui.screen())) {
+			setAsideOnce = true;
+			setAside(minecraft);
 			return;
 		}
 		if (attempted && minecraft.level == null && minecraft.gui.screen() != null && System.currentTimeMillis() - lastLog > 5000) {

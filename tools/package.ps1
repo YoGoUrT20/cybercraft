@@ -31,16 +31,18 @@ $prismZip = "PrismLauncher-Windows-MSVC-Portable-$prismVersion.zip"
 $prismUrl = "https://github.com/PrismLauncher/PrismLauncher/releases/download/$prismVersion/$prismZip"
 $prismSha256 = "ab35a770fb06d89d2ccc098079db5db329fb4e68f42b72babd8b095efde3d2d7"
 $prismLicenseUrl = "https://raw.githubusercontent.com/PrismLauncher/PrismLauncher/$prismVersion/LICENSE"
-$fabricApiJar = "fabric-api-0.161.0+26.3.jar"
+# Shipped without the "+" its authors name it with (fabric-api-0.161.0+26.3.jar): installers can
+# lose a file with one in its name, and Minecraft then quits with "requires fabric-api".
+$fabricApiJar = "fabric-api-0.161.0-26.3.jar"
 $fabricApiUrl = "https://cdn.modrinth.com/data/P7dR8mSH/versions/bNnaTiuM/fabric-api-0.161.0%2B26.3.jar"
-$e4mcJar = "e4mc-fabric-6.2.2-modern.jar"
-$e4mcUrl = "https://cdn.modrinth.com/data/qANg5Jrr/versions/AouleFRY/e4mc-fabric-6.2.2-modern.jar"
-$e4mcSha512 = "01ef0a8c5b76e2cb0effd337bad3350d8807d100d0ec661e01b2ffb20af7b652f756c5eaa11bee233c37905bfd7b573f7a85f3d15bfd2833962c76f02cd59a86"
+$e4mcJar = "e4mc-fabric-6.2.3-modern.jar"
+$e4mcUrl = "https://cdn.modrinth.com/data/qANg5Jrr/versions/RNDvrMAd/e4mc-fabric-6.2.3-modern.jar"
+$e4mcSha512 = "4e5dac0458cd533346d7a9572582a19f2f775371027ff0bfe445e025c2fa16ce22d9da924e73f64806373f82257e32b0e264cb0c29feaaa40fb03b6ff2cae8c9"
 $fabricApiSha512 = "ed6b2586d6fde11fde8472f5a527c51e99b67026e46f94d4bfd85e7e28ce5ee299173ee16ad576ceb51f39f98d30a811086a6deb1a86a524859cc16e12da109d"
 # Shipped next to the release for Melty (melty.json), as their authors publish them (both MIT).
-$codewareZip = "Codeware-1.20.5.zip"
-$codewareUrl = "https://github.com/psiberx/cp2077-codeware/releases/download/v1.20.5/$codewareZip"
-$codewareSha256 = "102989e199bad650fe6e53395c22bac53fdd7abecc6eeec3b0046886631591f0"
+$codewareZip = "Codeware-1.20.6.zip"
+$codewareUrl = "https://github.com/psiberx/cp2077-codeware/releases/download/v1.20.6/$codewareZip"
+$codewareSha256 = "7b55dcc0b569a652134aac493114c7e7e4bf1d6bd96b28fce0a62b60613ccff2"
 $modSettingsZip = "mod_settings_v0.2.21.zip"
 $modSettingsUrl = "https://github.com/jackhumbert/mod_settings/releases/download/v0.2.21/$modSettingsZip"
 $modSettingsSha256 = "7efa862a688e61002979de06ed0e7dcf0205f8d480c28aa91d8063721f27ce1f"
@@ -127,6 +129,8 @@ New-Item -ItemType Directory $mods -Force | Out-Null
 Copy-Item "$cache\$fabricApiJar" $mods
 Copy-Item "$cache\$e4mcJar" $mods
 Copy-Item $jar "$mods\cybercraft-$modVersion.jar"
+# A spare copy of each, outside the mods folder: the plugin puts back any that go missing from it.
+Copy-Item $mods "$bundle\jars" -Recurse
 Set-Content "$bundle\bundle-version.txt" "CyberCraft $version (mod $modVersion), Prism Launcher $prismVersion, $fabricApiJar, $e4mcJar" -NoNewline
 # The jars this release brings: the plugin removes older releases' ones (an installer adds beside them).
 Set-Content "$bundle\mods.txt" (@("cybercraft-$modVersion.jar", $fabricApiJar, $e4mcJar) -join "`r`n")

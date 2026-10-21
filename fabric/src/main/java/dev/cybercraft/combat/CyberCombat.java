@@ -87,7 +87,7 @@ public final class CyberCombat {
 				CyberLink.pushEvent(
 					Proto.EV_HIT_ACTOR, proxy.actorId(), hit[0], hit[1], hit[2], hit[3], Float.floatToRawIntBits(hit[4]), Float.floatToRawIntBits(hit[5])
 				);
-				CyberCraft.LOG.info("CyberCraft: hit {} for {} (knockback {})", proxy.getName().getString(), hit[0], hit[3]);
+				CyberCraft.LOG.debug("CyberCraft: hit {} for {} (knockback {})", proxy.getName().getString(), hit[0], hit[3]);
 			}
 		}
 	}
@@ -131,7 +131,7 @@ public final class CyberCombat {
 			stepOnTriggers(level, proxy);
 		}
 		if (PROXIES.size() != before && (PROXIES.size() % 5 == 0 || PROXIES.size() < 5)) {
-			CyberCraft.LOG.info("CyberCraft: {} NPCs mirrored as hittable stand-ins", PROXIES.size());
+			CyberCraft.LOG.debug("CyberCraft: {} NPCs mirrored as hittable stand-ins", PROXIES.size());
 		}
 	}
 

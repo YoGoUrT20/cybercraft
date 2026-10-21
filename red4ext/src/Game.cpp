@@ -1,5 +1,7 @@
 #include "Game.h"
 
+#include <fstream>
+
 #include <RED4ext/Scripting/Natives/Generated/Matrix.hpp>
 #include <RED4ext/Scripting/Natives/Generated/Transform.hpp>
 
@@ -30,6 +32,46 @@ namespace cybercraft
 
 	namespace
 	{
+		// Melty's test runs (test_release): while %LOCALAPPDATA%\Melty\test\cybercraft-2.json is
+		// there, each check this release names (recipe test.checks) is reported once, as a
+		// "pass <name>" line appended to the file its "checks" field names.
+		void ReportTestCheck(const char* a_name)
+		{
+			static std::mutex                      mutex;
+			static std::unordered_set<std::string> reported;
+			std::lock_guard                        lock(mutex);
+			if (reported.contains(a_name)) {
+				return;
+			}
+			wchar_t local[MAX_PATH]{};
+			if (!::GetEnvironmentVariableW(L"LOCALAPPDATA", local, MAX_PATH)) {
+				return;
+			}
+			std::ifstream in{ std::filesystem::path(local) / L"Melty" / L"test" / L"cybercraft-2.json" };
+			if (!in) {
+				return;
+			}
+			const std::string json{ std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>() };
+			// {"testId":..., "checks":"C:\\...\\checks.txt"}: the one string field read, JSON escapes undone.
+			const auto key = json.find("\"checks\"");
+			const auto open = key == std::string::npos ? key : json.find('"', json.find(':', key) + 1);
+			if (open == std::string::npos) {
+				return;
+			}
+			std::string path;
+			for (std::size_t i = open + 1; i < json.size() && json[i] != '"'; ++i) {
+				if (json[i] == '\\' && i + 1 < json.size()) {
+					++i;
+				}
+				path += json[i];
+			}
+			if (std::ofstream out{ std::filesystem::path(std::u8string(path.begin(), path.end())), std::ios::app }; out) {
+				out << "pass " << a_name << "\n";
+				reported.insert(a_name);
+				logger::info("test: reported pass {}", a_name);
+			}
+		}
+
 		std::mutex cameraMutex;
 		CameraView cameraView;
 	}
@@ -608,6 +650,7 @@ namespace cybercraft
 			const bool haveMc = mcAlive && link.ReadMcState(mc);
 			if (mcAlive && !mcWasAlive) {
 				logger::info("Minecraft connected (pid {})", link.McPid());
+				ReportTestCheck("minecraft-linked");
 				link.ResetOverlay();
 				++epoch;
 				teleportPending = true;

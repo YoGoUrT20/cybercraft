@@ -222,6 +222,34 @@ namespace cybercraft::Launcher
 			}
 		}
 
+		// The jars this release brings that aren't in the mods folder (found missing on players' PCs:
+		// Minecraft then quit with "requires fabric-api"): put back from the bundle's jars folder,
+		// which holds a copy of each.
+		void RestoreMods(const std::filesystem::path& a_dir)
+		{
+			std::ifstream list{ a_dir / "mods.txt" };
+			if (!list) {
+				return;
+			}
+			const auto      mods = a_dir / "Prism" / "instances" / "CyberCraft" / ".minecraft" / "mods";
+			std::error_code ec;
+			std::filesystem::create_directories(mods, ec);
+			for (std::string line; std::getline(list, line);) {
+				while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) {
+					line.pop_back();
+				}
+				const auto spare = a_dir / "jars" / line;
+				if (line.empty() || std::filesystem::exists(mods / line, ec) || !std::filesystem::exists(spare, ec)) {
+					continue;
+				}
+				if (std::filesystem::copy_file(spare, mods / line, std::filesystem::copy_options::overwrite_existing, ec)) {
+					logger::info("Minecraft: {} was missing from its mods folder; put back", line);
+				} else {
+					logger::warn("Minecraft: {} is missing from its mods folder and couldn't be put back ({})", line, ec.message());
+				}
+			}
+		}
+
 		// Prism's settings are the player's once it has them (an installer may have written some
 		// already, Melty signing it in), but CyberCraft needs its defaults (no window left open, Java
 		// downloaded by itself): any of those still missing are added.
@@ -372,6 +400,7 @@ namespace cybercraft::Launcher
 					return;
 				}
 				TidyMods(InstallDir());
+				RestoreMods(InstallDir());
 				MergeDefaults(InstallDir());
 				if (!std::filesystem::exists(program.parent_path() / "accounts.json")) {
 					status = Status::kSignIn;  // first time: Prism asks for the Microsoft account
