@@ -4,7 +4,8 @@
   "games": [
     {
       "slug": "cyberpunk-2077",
-      "role": "primary"
+      "role": "primary",
+      "version": ">=3.0.80.51928 <3.0.88"
     },
     {
       "slug": "minecraft-java",
@@ -100,9 +101,15 @@
   "runtimeData": [
     "{localappdata}/CyberCraft"
   ],
+  "test": {
+    "checks": [
+      "minecraft-linked"
+    ],
+    "minutes": 4
+  },
   "notes": {
     "firstLaunch": "The first time, Melty signs CyberCraft's Minecraft in with the Microsoft account that owns Minecraft: Java Edition before the game starts. While Cyberpunk loads, Prism downloads Minecraft and Java in the background (a few minutes, once). Minecraft then runs hidden and takes over V once a save has loaded. Your world opens to friends by itself; turn off Open to friends in Mod Settings to keep it private.",
-    "beforeInstall": "If you have CyberCraft: Portable Prism or CyberCraft: Friends installed, remove it first: they're older remixes of this mashup and put the same files in the game."
+    "beforeInstall": "CyberCraft runs on Cyberpunk 2077 patch 2.31. Patch 2.5 isn't supported yet: RED4ext, Codeware and ArchiveXL, which CyberCraft is built on, haven't been updated for it, and every RED4ext mod crashes on 2.5 until they are. If you have CyberCraft: Portable Prism or CyberCraft: Friends installed, remove it first: they're older remixes of this mashup and put the same files in the game."
   },
   "multiplayer": {
     "maxPlayers": 100,

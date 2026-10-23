@@ -71,7 +71,7 @@ memory. Minecraft runs hidden in the background, and Cyberpunk draws the picture
 
 ## Requirements
 
-**Cyberpunk 2077** (PC, the current patch) with [RED4ext](https://github.com/wopss/RED4ext), and
+**Cyberpunk 2077** (PC, patch 2.31) with [RED4ext](https://github.com/wopss/RED4ext), and
 [Codeware](https://github.com/psiberx/cp2077-codeware) for lights, colliders, third person
 and changing Night City's weather (without it those are off; the rest works).
 DLSS (or any other Streamline feature that uses depth) is recommended: without it, blocks are hidden
@@ -218,6 +218,9 @@ Java 25 and the mod jar from the release. Every key, with what it does, is in
 
 ## Known limitations
 
+- Cyberpunk 2077 patch 2.5 isn't supported yet. Every RED4ext mod crashes on it at start until
+  RED4ext, Codeware and ArchiveXL are updated for it; CyberCraft follows once they are. Melty
+  only starts CyberCraft on patch 2.31.
 - With frame generation on, Minecraft is drawn on the game's real frames and frame generation
   carries it into the generated ones like the game's HUD, so blocks move at the real frame rate in
   a fast turn. New and not yet tried in the game.
